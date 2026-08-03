@@ -1,1 +1,78 @@
-import express, { Request, Response } from 'express';\nimport { YouTubeService } from '../services/youtubeService.js';\nimport { VideoProcessor } from '../services/videoProcessor.js';\nimport { logger } from '../utils/logger.js';\nimport { AppError } from '../middleware/errorHandler.js';\nimport { authMiddleware } from '../middleware/auth.js';\n\nconst router = express.Router();\n\nawait VideoProcessor.initialize();\n\n/**\n * @swagger\n * /api/videos/analyze:\n *   post:\n *     summary: Analyze YouTube video for clip opportunities\n *     security:\n *       - bearerAuth: []\n *     requestBody:\n *       required: true\n *       content:\n *         application/json:\n *           schema:\n *             type: object\n *             properties:\n *               url:\n *                 type: string\n *               goal:\n *                 type: string\n *               platforms:\n *                 type: array\n *                 items:\n *                   type: string\n *     responses:\n *       200:\n *         description: Video analysis successful\n */\nrouter.post('/analyze', authMiddleware, async (req: Request, res: Response) => {\n  try {\n    const { url, goal, platforms } = req.body;\n\n    if (!url || !goal) {\n      throw new AppError('URL and goal are required', 400);\n    }\n\n    logger.info(`Analyzing video: ${url}`);\n\n    const videoId = YouTubeService.extractVideoId(url);\n    if (!videoId) {\n      throw new AppError('Invalid YouTube URL', 400);\n    }\n\n    // Get video metadata\n    const metadata = await YouTubeService.getVideoMetadata(videoId);\n\n    // Generate clips based on goal and platforms\n    const clips = await VideoProcessor.generateClips({\n      videoId,\n      metadata,\n      goal,\n      platforms: platforms || ['youtube'],\n    });\n\n    res.json({\n      videoId,\n      metadata,\n      clips,\n      totalClips: clips.length,\n    });\n  } catch (error: any) {\n    logger.error('Analysis error:', error.message);\n    throw error;\n  }\n});\n\nexport default router;\n
+import express, { Request, Response } from 'express';
+import { YouTubeService } from '../services/youtubeService.js';
+import { VideoProcessor } from '../services/videoProcessor.js';
+import { logger } from '../utils/logger.js';
+import { AppError } from '../middleware/errorHandler.js';
+import { authMiddleware } from '../middleware/auth.js';
+
+const router = express.Router();
+
+await VideoProcessor.initialize();
+
+/**
+ * POST /api/videos/analyze
+ * Analyze a YouTube URL and return clip suggestions.
+ * Response shape matches the frontend GeneratorPage expectations.
+ */
+router.post('/analyze', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { url, goal, platforms } = req.body;
+
+    if (!url) {
+      throw new AppError('URL is required', 400);
+    }
+
+    logger.info(`Analyzing video: ${url}`);
+
+    const videoId = YouTubeService.extractVideoId(url);
+    if (!videoId) {
+      throw new AppError('Invalid YouTube URL', 400);
+    }
+
+    const metadata = await YouTubeService.getVideoMetadata(videoId);
+
+    const clips = await VideoProcessor.generateClips({
+      videoId,
+      metadata,
+      goal: goal || 'Viral highlights',
+      platforms: platforms || ['youtube'],
+    });
+
+    // Frontend-friendly shape + full backend shape
+    const suggestions = clips.map((c) => ({
+      startSeconds: c.startSeconds,
+      duration: c.duration,
+      score: c.score,
+      reason: c.reason || c.label,
+      label: c.label,
+      platform: c.platform,
+      hook: c.hook,
+      hashtags: c.hashtags,
+    }));
+
+    res.json({
+      videoId,
+      // Frontend GeneratorPage expects videoInfo
+      videoInfo: {
+        videoId,
+        title: metadata.title,
+        description: metadata.description?.slice(0, 300),
+        duration: metadata.duration,
+        thumbnail: metadata.thumbnail,
+        views: metadata.views,
+        channelTitle: metadata.channelTitle,
+      },
+      // Frontend expects suggestions
+      suggestions,
+      // Also keep backend-oriented fields
+      metadata,
+      clips,
+      totalClips: clips.length,
+    });
+  } catch (error: any) {
+    logger.error('Analysis error:', error.message);
+    throw error;
+  }
+});
+
+export default router;

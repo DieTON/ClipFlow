@@ -1,1 +1,90 @@
-import express, { Request, Response } from 'express';\nimport { authMiddleware } from '../middleware/auth.js';\nimport { logger } from '../utils/logger.js';\nimport { YouTubeService } from '../services/youtubeService.js';\nimport { prisma } from '../index.js';\nimport { AppError } from '../middleware/errorHandler.js';\n\nconst router = express.Router();\n\n/**\n * @swagger\n * /api/youtube/channels:\n *   get:\n *     summary: Get user's YouTube channels\n *     security:\n *       - bearerAuth: []\n *     responses:\n *       200:\n *         description: List of YouTube channels\n */\nrouter.get('/channels', authMiddleware, async (req: Request, res: Response) => {\n  try {\n    const userId = req.user?.userId;\n\n    const oAuthToken = await prisma.oAuthToken.findUnique({\n      where: { userId: userId! },\n    });\n\n    if (!oAuthToken || !oAuthToken.accessToken) {\n      throw new AppError('No YouTube connection', 401);\n    }\n\n    const channels = await YouTubeService.getUserChannels(oAuthToken.accessToken);\n\n    res.json({ channels });\n  } catch (error: any) {\n    logger.error('Channels error:', error.message);\n    throw error;\n  }\n});\n\n/**\n * @swagger\n * /api/youtube/publish:\n *   post:\n *     summary: Publish clip to YouTube Shorts\n *     security:\n *       - bearerAuth: []\n *     requestBody:\n *       required: true\n *       content:\n *         application/json:\n *           schema:\n *             type: object\n *             properties:\n *               clipId:\n *                 type: string\n *               title:\n *                 type: string\n *               description:\n *                 type: string\n */\nrouter.post('/publish', authMiddleware, async (req: Request, res: Response) => {\n  try {\n    const { clipId, title, description, tags } = req.body;\n    const userId = req.user?.userId;\n\n    if (!clipId) {\n      throw new AppError('Clip ID is required', 400);\n    }\n\n    const clip = await prisma.clip.findUnique({\n      where: { id: clipId },\n    });\n\n    if (!clip || clip.userId !== userId) {\n      throw new AppError('Clip not found', 404);\n    }\n\n    const oAuthToken = await prisma.oAuthToken.findUnique({\n      where: { userId: userId! },\n    });\n\n    if (!oAuthToken || !oAuthToken.accessToken) {\n      throw new AppError('No YouTube connection', 401);\n    }\n\n    // TODO: Implement actual YouTube publishing\n    logger.info(`Publishing clip ${clipId} to YouTube Shorts`);\n\n    res.json({\n      message: 'Clip scheduled for publishing',\n      clipId,\n      status: 'scheduled',\n    });\n  } catch (error: any) {\n    logger.error('Publish error:', error.message);\n    throw error;\n  }\n});\n\nexport default router;\n
+import express, { Request, Response } from 'express';
+import { authMiddleware } from '../middleware/auth.js';
+import { logger } from '../utils/logger.js';
+import { YouTubeService } from '../services/youtubeService.js';
+import { prisma } from '../index.js';
+import { AppError } from '../middleware/errorHandler.js';
+import { enqueuePublish } from '../queues/index.js';
+
+const router = express.Router();
+
+router.get('/channels', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+
+    const oAuthToken = await prisma.oAuthToken.findUnique({
+      where: { userId: userId! },
+    });
+
+    if (!oAuthToken?.accessToken) {
+      throw new AppError('No YouTube connection — sign in with Google again', 401);
+    }
+
+    let accessToken = oAuthToken.accessToken;
+    if (
+      oAuthToken.expiresAt &&
+      oAuthToken.expiresAt < new Date() &&
+      oAuthToken.refreshToken
+    ) {
+      accessToken = await YouTubeService.refreshAccessToken(
+        oAuthToken.refreshToken,
+        userId!,
+      );
+    }
+
+    const channels = await YouTubeService.getUserChannels(accessToken);
+    res.json({ channels });
+  } catch (error: any) {
+    logger.error('Channels error:', error.message);
+    throw error;
+  }
+});
+
+router.post('/publish', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { clipId, title, description, tags } = req.body;
+    const userId = req.user?.userId;
+
+    if (!clipId) {
+      throw new AppError('Clip ID is required', 400);
+    }
+
+    const clip = await prisma.clip.findUnique({ where: { id: clipId } });
+    if (!clip || clip.userId !== userId) {
+      throw new AppError('Clip not found', 404);
+    }
+
+    if (clip.status !== 'ready' && clip.status !== 'published') {
+      throw new AppError(
+        `Clip must be processed first (current status: ${clip.status})`,
+        400,
+      );
+    }
+
+    const oAuthToken = await prisma.oAuthToken.findUnique({
+      where: { userId: userId! },
+    });
+    if (!oAuthToken?.accessToken) {
+      throw new AppError('No YouTube connection', 401);
+    }
+
+    await enqueuePublish({
+      clipId,
+      userId: userId!,
+      title: title || clip.title,
+      description: description || clip.description || undefined,
+      tags: tags || ['Shorts', 'ClipFlow'],
+    });
+
+    res.json({
+      message: 'Clip queued for publishing to YouTube Shorts',
+      clipId,
+      status: 'queued',
+    });
+  } catch (error: any) {
+    logger.error('Publish error:', error.message);
+    throw error;
+  }
+});
+
+export default router;

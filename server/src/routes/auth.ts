@@ -1,1 +1,227 @@
-import express, { Request, Response } from 'express';\nimport { OAuth2Client } from 'google-auth-library';\nimport jwt from 'jsonwebtoken';\nimport { logger } from '../utils/logger.js';\nimport { prisma } from '../index.js';\nimport { AppError } from '../middleware/errorHandler.js';\n\nconst router = express.Router();\nconst oauth2Client = new OAuth2Client(\n  process.env.GOOGLE_CLIENT_ID,\n  process.env.GOOGLE_CLIENT_SECRET,\n  process.env.GOOGLE_REDIRECT_URI,\n);\n\n/**\n * @swagger\n * /api/auth/google:\n *   post:\n *     summary: Authenticate with Google OAuth\n *     requestBody:\n *       required: true\n *       content:\n *         application/json:\n *           schema:\n *             type: object\n *             properties:\n *               code:\n *                 type: string\n *                 description: Google authorization code\n *     responses:\n *       200:\n *         description: Authentication successful\n *       401:\n *         description: Authentication failed\n */\nrouter.post('/google', async (req: Request, res: Response) => {\n  try {\n    const { code } = req.body;\n\n    if (!code) {\n      throw new AppError('No authorization code provided', 400);\n    }\n\n    const { tokens } = await oauth2Client.getToken(code);\n\n    // Get user info from Google\n    const userInfo = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {\n      headers: { Authorization: `Bearer ${tokens.access_token}` },\n    }).then((r) => r.json());\n\n    // Find or create user\n    let user = await prisma.user.findUnique({\n      where: { email: userInfo.email },\n    });\n\n    if (!user) {\n      user = await prisma.user.create({\n        data: {\n          email: userInfo.email,\n          name: userInfo.name,\n          avatar: userInfo.picture,\n          googleId: userInfo.id,\n        },\n      });\n    }\n\n    // Create JWT token\n    const token = jwt.sign(\n      {\n        user: {\n          userId: user.id,\n          email: user.email,\n        },\n      },\n      process.env.JWT_SECRET || 'secret',\n      { expiresIn: '7d' },\n    );\n\n    // Store OAuth tokens\n    await prisma.oAuthToken.upsert({\n      where: { userId: user.id },\n      create: {\n        userId: user.id,\n        accessToken: tokens.access_token || '',\n        refreshToken: tokens.refresh_token,\n        expiresAt: new Date(Date.now() + (tokens.expiry_date || 0)),\n      },\n      update: {\n        accessToken: tokens.access_token || '',\n        refreshToken: tokens.refresh_token,\n        expiresAt: new Date(Date.now() + (tokens.expiry_date || 0)),\n      },\n    });\n\n    res.json({\n      token,\n      user: {\n        id: user.id,\n        email: user.email,\n        name: user.name,\n        avatar: user.avatar,\n      },\n    });\n  } catch (error: any) {\n    logger.error('Auth error:', error.message);\n    throw error;\n  }\n});\n\n/**\n * @swagger\n * /api/auth/refresh:\n *   post:\n *     summary: Refresh JWT token\n *     requestBody:\n *       required: true\n *       content:\n *         application/json:\n *           schema:\n *             type: object\n *             properties:\n *               refreshToken:\n *                 type: string\n */\nrouter.post('/refresh', (req: Request, res: Response) => {\n  try {\n    const { refreshToken } = req.body;\n\n    const decoded = jwt.verify(\n      refreshToken,\n      process.env.JWT_REFRESH_SECRET || 'refresh_secret',\n    ) as any;\n\n    const newToken = jwt.sign(\n      { user: decoded.user },\n      process.env.JWT_SECRET || 'secret',\n      { expiresIn: '7d' },\n    );\n\n    res.json({ token: newToken });\n  } catch (error: any) {\n    logger.error('Refresh error:', error.message);\n    throw new AppError('Invalid refresh token', 401);\n  }\n});\n\nexport default router;\n
+import express, { Request, Response } from 'express';
+import { OAuth2Client } from 'google-auth-library';
+import jwt from 'jsonwebtoken';
+import { logger } from '../utils/logger.js';
+import { prisma } from '../index.js';
+import { AppError } from '../middleware/errorHandler.js';
+
+const router = express.Router();
+
+function getOAuthClient() {
+  return new OAuth2Client(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI,
+  );
+}
+
+const SCOPES = [
+  'openid',
+  'email',
+  'profile',
+  'https://www.googleapis.com/auth/youtube.upload',
+  'https://www.googleapis.com/auth/youtube.readonly',
+];
+
+router.get('/google/url', (_req: Request, res: Response) => {
+  const oauth2Client = getOAuthClient();
+  const url = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    prompt: 'consent',
+    scope: SCOPES,
+  });
+  res.json({ url });
+});
+
+router.get('/google/callback', async (req: Request, res: Response) => {
+  try {
+    const code = req.query.code as string;
+    if (!code) {
+      throw new AppError('No authorization code provided', 400);
+    }
+
+    const oauth2Client = getOAuthClient();
+    const { tokens } = await oauth2Client.getToken(code);
+
+    const userInfo = await fetch(
+      'https://www.googleapis.com/oauth2/v2/userinfo',
+      {
+        headers: { Authorization: `Bearer ${tokens.access_token}` },
+      },
+    ).then((r) => r.json());
+
+    let user = await prisma.user.findUnique({
+      where: { email: userInfo.email },
+    });
+
+    if (!user) {
+      user = await prisma.user.create({
+        data: {
+          email: userInfo.email,
+          name: userInfo.name,
+          avatar: userInfo.picture,
+          googleId: userInfo.id,
+        },
+      });
+    } else {
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          name: userInfo.name,
+          avatar: userInfo.picture,
+          googleId: userInfo.id,
+        },
+      });
+    }
+
+    const token = jwt.sign(
+      {
+        user: {
+          userId: user.id,
+          email: user.email,
+        },
+      },
+      process.env.JWT_SECRET || 'secret',
+      { expiresIn: '7d' },
+    );
+
+    await prisma.oAuthToken.upsert({
+      where: { userId: user.id },
+      create: {
+        userId: user.id,
+        accessToken: tokens.access_token || '',
+        refreshToken: tokens.refresh_token || undefined,
+        expiresAt: tokens.expiry_date
+          ? new Date(tokens.expiry_date)
+          : undefined,
+      },
+      update: {
+        accessToken: tokens.access_token || '',
+        ...(tokens.refresh_token
+          ? { refreshToken: tokens.refresh_token }
+          : {}),
+        expiresAt: tokens.expiry_date
+          ? new Date(tokens.expiry_date)
+          : undefined,
+      },
+    });
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const userParam = encodeURIComponent(
+      JSON.stringify({
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        avatar: user.avatar,
+      }),
+    );
+
+    res.redirect(`${frontendUrl}/login?token=${token}&user=${userParam}`);
+  } catch (error: any) {
+    logger.error('Auth callback error:', error.message);
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    res.redirect(`${frontendUrl}/login?error=auth_failed`);
+  }
+});
+
+router.post('/google', async (req: Request, res: Response) => {
+  try {
+    const { code } = req.body;
+    if (!code) {
+      throw new AppError('No authorization code provided', 400);
+    }
+
+    const oauth2Client = getOAuthClient();
+    const { tokens } = await oauth2Client.getToken(code);
+
+    const userInfo = await fetch(
+      'https://www.googleapis.com/oauth2/v2/userinfo',
+      {
+        headers: { Authorization: `Bearer ${tokens.access_token}` },
+      },
+    ).then((r) => r.json());
+
+    let user = await prisma.user.findUnique({
+      where: { email: userInfo.email },
+    });
+
+    if (!user) {
+      user = await prisma.user.create({
+        data: {
+          email: userInfo.email,
+          name: userInfo.name,
+          avatar: userInfo.picture,
+          googleId: userInfo.id,
+        },
+      });
+    }
+
+    const token = jwt.sign(
+      {
+        user: {
+          userId: user.id,
+          email: user.email,
+        },
+      },
+      process.env.JWT_SECRET || 'secret',
+      { expiresIn: '7d' },
+    );
+
+    await prisma.oAuthToken.upsert({
+      where: { userId: user.id },
+      create: {
+        userId: user.id,
+        accessToken: tokens.access_token || '',
+        refreshToken: tokens.refresh_token || undefined,
+        expiresAt: tokens.expiry_date
+          ? new Date(tokens.expiry_date)
+          : undefined,
+      },
+      update: {
+        accessToken: tokens.access_token || '',
+        ...(tokens.refresh_token
+          ? { refreshToken: tokens.refresh_token }
+          : {}),
+        expiresAt: tokens.expiry_date
+          ? new Date(tokens.expiry_date)
+          : undefined,
+      },
+    });
+
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        avatar: user.avatar,
+      },
+    });
+  } catch (error: any) {
+    logger.error('Auth error:', error.message);
+    throw error;
+  }
+});
+
+router.post('/refresh', (req: Request, res: Response) => {
+  try {
+    const { refreshToken } = req.body;
+    const decoded = jwt.verify(
+      refreshToken,
+      process.env.JWT_REFRESH_SECRET || 'refresh_secret',
+    ) as any;
+
+    const newToken = jwt.sign(
+      { user: decoded.user },
+      process.env.JWT_SECRET || 'secret',
+      { expiresIn: '7d' },
+    );
+
+    res.json({ token: newToken });
+  } catch (error: any) {
+    logger.error('Refresh error:', error.message);
+    throw new AppError('Invalid refresh token', 401);
+  }
+});
+
+export default router;
