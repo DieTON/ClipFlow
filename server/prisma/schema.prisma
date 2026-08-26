@@ -1,1 +1,81 @@
-// This is your Prisma schema file,\n// learn more about it in the docs: https://pris.ly/d/prisma-schema\n\ngenerator client {\n  provider = \"prisma-client-js\"\n}\n\ndatasource db {\n  provider = \"postgresql\"\n  url      = env(\"DATABASE_URL\")\n}\n\nmodel User {\n  id        String   @id @default(cuid())\n  email     String   @unique\n  name      String?\n  avatar    String?\n  googleId  String?\n  \n  clips     Clip[]\n  schedules Schedule[]\n  oAuthToken OAuthToken?\n  \n  createdAt DateTime @default(now())\n  updatedAt DateTime @updatedAt\n}\n\nmodel OAuthToken {\n  id           String   @id @default(cuid())\n  userId       String   @unique\n  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)\n  \n  accessToken  String\n  refreshToken String?\n  expiresAt    DateTime?\n  \n  createdAt    DateTime @default(now())\n  updatedAt    DateTime @updatedAt\n}\n\nmodel Clip {\n  id            String   @id @default(cuid())\n  userId        String\n  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)\n  \n  videoId       String\n  title         String\n  description   String?\n  startSeconds  Int\n  duration      Int\n  platform      String   // \"youtube\", \"tiktok\", \"instagram\", \"facebook\"\n  \n  videoUrl      String?\n  thumbnailUrl  String?\n  status        String   @default(\"draft\")  // draft, processing, ready, published\n  \n  schedules     Schedule[]\n  \n  createdAt     DateTime @default(now())\n  updatedAt     DateTime @updatedAt\n}\n\nmodel Schedule {\n  id          String   @id @default(cuid())\n  userId      String\n  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)\n  \n  clipId      String\n  clip        Clip     @relation(fields: [clipId], references: [id], onDelete: Cascade)\n  \n  scheduledAt DateTime\n  status      String   @default(\"pending\")  // pending, scheduled, published, failed\n  \n  youtubeVideoId String?\n  publishedAt    DateTime?\n  viewCount      Int      @default(0)\n  likeCount      Int      @default(0)\n  \n  createdAt   DateTime @default(now())\n  updatedAt   DateTime @updatedAt\n}\n
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  avatar    String?
+  googleId  String?
+
+  clips      Clip[]
+  schedules  Schedule[]
+  oAuthToken OAuthToken?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model OAuthToken {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Clip {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  videoId      String
+  title        String
+  description  String?
+  startSeconds Int
+  duration     Int
+  platform     String
+
+  videoUrl     String?
+  thumbnailUrl String?
+  status       String  @default("draft")
+
+  schedules Schedule[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Schedule {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  clipId String
+  clip   Clip   @relation(fields: [clipId], references: [id], onDelete: Cascade)
+
+  scheduledAt DateTime
+  status      String   @default("pending")
+
+  youtubeVideoId String?
+  publishedAt    DateTime?
+  viewCount      Int       @default(0)
+  likeCount      Int       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
