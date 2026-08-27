@@ -1,1 +1,86 @@
-import AWS from 'aws-sdk';\nimport { promises as fs } from 'fs';\nimport { logger } from '../utils/logger.js';\nimport path from 'path';\n\nconst s3 = new AWS.S3({\n  accessKeyId: process.env.AWS_ACCESS_KEY_ID,\n  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,\n  region: process.env.AWS_REGION,\n});\n\nexport class S3Service {\n  static async uploadFile(\n    filePath: string,\n    key: string,\n    contentType: string = 'video/mp4',\n  ): Promise<string> {\n    try {\n      const fileContent = await fs.readFile(filePath);\n      const params = {\n        Bucket: process.env.AWS_S3_BUCKET || 'clipflow-videos',\n        Key: key,\n        Body: fileContent,\n        ContentType: contentType,\n        ACL: 'public-read',\n      };\n\n      const result = await s3.upload(params).promise();\n      logger.info(`File uploaded to S3: ${result.Location}`);\n      return result.Location;\n    } catch (error: any) {\n      logger.error('S3 upload error:', error.message);\n      throw error;\n    }\n  }\n\n  static async deleteFile(key: string): Promise<void> {\n    try {\n      const params = {\n        Bucket: process.env.AWS_S3_BUCKET || 'clipflow-videos',\n        Key: key,\n      };\n      await s3.deleteObject(params).promise();\n      logger.info(`File deleted from S3: ${key}`);\n    } catch (error: any) {\n      logger.error('S3 delete error:', error.message);\n      throw error;\n    }\n  }\n\n  static async getSignedUrl(key: string, expiresIn: number = 3600): Promise<string> {\n    try {\n      const params = {\n        Bucket: process.env.AWS_S3_BUCKET || 'clipflow-videos',\n        Key: key,\n        Expires: expiresIn,\n      };\n      const url = s3.getSignedUrl('getObject', params);\n      return url;\n    } catch (error: any) {\n      logger.error('S3 signed URL error:', error.message);\n      throw error;\n    }\n  }\n\n  static async uploadVideoFile(\n    filePath: string,\n    userId: string,\n    fileName: string,\n  ): Promise<{ url: string; key: string }> {\n    const key = `videos/${userId}/${Date.now()}-${fileName}`;\n    const url = await this.uploadFile(filePath, key, 'video/mp4');\n    return { url, key };\n  }\n\n  static async uploadThumbnail(\n    filePath: string,\n    userId: string,\n    fileName: string,\n  ): Promise<{ url: string; key: string }> {\n    const key = `thumbnails/${userId}/${Date.now()}-${fileName}`;\n    const url = await this.uploadFile(filePath, key, 'image/jpeg');\n    return { url, key };\n  }\n}\n
+import AWS from 'aws-sdk';
+import { promises as fs } from 'fs';
+import { logger } from '../utils/logger.js';
+
+const s3 = new AWS.S3({
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  region: process.env.AWS_REGION,
+});
+
+export class S3Service {
+  static async uploadFile(
+    filePath: string,
+    key: string,
+    contentType: string = 'video/mp4',
+  ): Promise<string> {
+    try {
+      const fileContent = await fs.readFile(filePath);
+      const params = {
+        Bucket: process.env.AWS_S3_BUCKET || 'clipflow-videos',
+        Key: key,
+        Body: fileContent,
+        ContentType: contentType,
+        ACL: 'public-read' as const,
+      };
+
+      const result = await s3.upload(params).promise();
+      logger.info(`File uploaded to S3: ${result.Location}`);
+      return result.Location;
+    } catch (error: any) {
+      logger.error('S3 upload error:', error.message);
+      throw error;
+    }
+  }
+
+  static async deleteFile(key: string): Promise<void> {
+    try {
+      const params = {
+        Bucket: process.env.AWS_S3_BUCKET || 'clipflow-videos',
+        Key: key,
+      };
+      await s3.deleteObject(params).promise();
+      logger.info(`File deleted from S3: ${key}`);
+    } catch (error: any) {
+      logger.error('S3 delete error:', error.message);
+      throw error;
+    }
+  }
+
+  static async getSignedUrl(
+    key: string,
+    expiresIn: number = 3600,
+  ): Promise<string> {
+    try {
+      const params = {
+        Bucket: process.env.AWS_S3_BUCKET || 'clipflow-videos',
+        Key: key,
+        Expires: expiresIn,
+      };
+      return s3.getSignedUrl('getObject', params);
+    } catch (error: any) {
+      logger.error('S3 signed URL error:', error.message);
+      throw error;
+    }
+  }
+
+  static async uploadVideoFile(
+    filePath: string,
+    userId: string,
+    fileName: string,
+  ): Promise<{ url: string; key: string }> {
+    const key = `videos/${userId}/${Date.now()}-${fileName}`;
+    const url = await this.uploadFile(filePath, key, 'video/mp4');
+    return { url, key };
+  }
+
+  static async uploadThumbnail(
+    filePath: string,
+    userId: string,
+    fileName: string,
+  ): Promise<{ url: string; key: string }> {
+    const key = `thumbnails/${userId}/${Date.now()}-${fileName}`;
+    const url = await this.uploadFile(filePath, key, 'image/jpeg');
+    return { url, key };
+  }
+}

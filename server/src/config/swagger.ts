@@ -1,1 +1,38 @@
-const swaggerDocs = {\n  openapi: '3.0.0',\n  info: {\n    title: 'ClipFlow API',\n    version: '1.0.0',\n    description: 'AI-powered video clip generator and YouTube Shorts auto-publisher',\n    contact: {\n      name: 'ClipFlow Support',\n    },\n  },\n  servers: [\n    {\n      url: 'http://localhost:5000',\n      description: 'Development Server',\n    },\n    {\n      url: process.env.API_URL || 'https://api.clipflow.app',\n      description: 'Production Server',\n    },\n  ],\n  components: {\n    securitySchemes: {\n      bearerAuth: {\n        type: 'http',\n        scheme: 'bearer',\n        bearerFormat: 'JWT',\n      },\n    },\n  },\n  security: [\n    {\n      bearerAuth: [],\n    },\n  ],\n};\n\nexport default swaggerDocs;\n
+const swaggerDocs = {
+  openapi: '3.0.0',
+  info: {
+    title: 'ClipFlow API',
+    version: '1.0.0',
+    description:
+      'AI-powered video clip generator and YouTube Shorts auto-publisher',
+    contact: {
+      name: 'ClipFlow Support',
+    },
+  },
+  servers: [
+    {
+      url: 'http://localhost:5000',
+      description: 'Development Server',
+    },
+    {
+      url: process.env.API_URL || 'https://api.clipflow.app',
+      description: 'Production Server',
+    },
+  ],
+  components: {
+    securitySchemes: {
+      bearerAuth: {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+      },
+    },
+  },
+  security: [
+    {
+      bearerAuth: [],
+    },
+  ],
+};
+
+export default swaggerDocs;

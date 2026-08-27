@@ -1,1 +1,46 @@
-import { Request, Response, NextFunction } from 'express';\nimport { logger } from '../utils/logger.js';\nimport { ZodError } from 'zod';\n\nexport class AppError extends Error {\n  constructor(\n    public message: string,\n    public statusCode: number,\n  ) {\n    super(message);\n    this.name = 'AppError';\n  }\n}\n\nexport const errorHandler = (\n  err: Error | AppError | ZodError | any,\n  req: Request,\n  res: Response,\n  next: NextFunction,\n) => {\n  logger.error(`Error: ${err.message}`);\n\n  if (err instanceof ZodError) {\n    return res.status(400).json({\n      error: 'Validation Error',\n      details: err.errors,\n    });\n  }\n\n  if (err instanceof AppError) {\n    return res.status(err.statusCode).json({\n      error: err.message,\n    });\n  }\n\n  if (err.statusCode) {\n    return res.status(err.statusCode).json({\n      error: err.message || 'An error occurred',\n    });\n  }\n\n  res.status(500).json({\n    error: 'Internal Server Error',\n    message: process.env.NODE_ENV === 'development' ? err.message : undefined,\n  });\n};\n
+import { Request, Response, NextFunction } from 'express';
+import { logger } from '../utils/logger.js';
+import { ZodError } from 'zod';
+
+export class AppError extends Error {
+  constructor(
+    public message: string,
+    public statusCode: number,
+  ) {
+    super(message);
+    this.name = 'AppError';
+  }
+}
+
+export const errorHandler = (
+  err: Error | AppError | ZodError | any,
+  _req: Request,
+  res: Response,
+  _next: NextFunction,
+) => {
+  logger.error(`Error: ${err.message}`);
+
+  if (err instanceof ZodError) {
+    return res.status(400).json({
+      error: 'Validation Error',
+      details: err.errors,
+    });
+  }
+
+  if (err instanceof AppError) {
+    return res.status(err.statusCode).json({
+      error: err.message,
+    });
+  }
+
+  if (err.statusCode) {
+    return res.status(err.statusCode).json({
+      error: err.message || 'An error occurred',
+    });
+  }
+
+  res.status(500).json({
+    error: 'Internal Server Error',
+    message: process.env.NODE_ENV === 'development' ? err.message : undefined,
+  });
+};

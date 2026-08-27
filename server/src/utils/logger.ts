@@ -1,1 +1,50 @@
-import winston from 'winston';\nimport { promises as fs } from 'fs';\n\nconst levels = {\n  error: 0,\n  warn: 1,\n  info: 2,\n  http: 3,\n  debug: 4,\n};\n\nconst colors = {\n  error: 'red',\n  warn: 'yellow',\n  info: 'green',\n  http: 'magenta',\n  debug: 'white',\n};\n\nwinston.addColors(colors);\n\nconst format = winston.format.combine(\n  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss:ms' }),\n  winston.format.colorize({ all: true }),\n  winston.format.printf(\n    (info) => `${info.timestamp} ${info.level}: ${info.message}`,\n  ),\n);\n\n// Ensure logs directory exists\ntry {\n  await fs.mkdir('logs', { recursive: true });\n} catch (err) {\n  // Directory might already exist\n}\n\nconst transports = [\n  new winston.transports.Console(),\n  new winston.transports.File({\n    filename: 'logs/error.log',\n    level: 'error',\n  }),\n  new winston.transports.File({ filename: 'logs/all.log' }),\n];\n\nexport const logger = winston.createLogger({\n  level: process.env.LOG_LEVEL || 'debug',\n  levels,\n  format,\n  transports,\n});\n
+import winston from 'winston';
+import { mkdirSync } from 'fs';
+
+const levels = {
+  error: 0,
+  warn: 1,
+  info: 2,
+  http: 3,
+  debug: 4,
+};
+
+const colors = {
+  error: 'red',
+  warn: 'yellow',
+  info: 'green',
+  http: 'magenta',
+  debug: 'white',
+};
+
+winston.addColors(colors);
+
+const format = winston.format.combine(
+  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss:ms' }),
+  winston.format.colorize({ all: true }),
+  winston.format.printf(
+    (info) => `${info.timestamp} ${info.level}: ${info.message}`,
+  ),
+);
+
+try {
+  mkdirSync('logs', { recursive: true });
+} catch {
+  // Directory might already exist
+}
+
+const transports = [
+  new winston.transports.Console(),
+  new winston.transports.File({
+    filename: 'logs/error.log',
+    level: 'error',
+  }),
+  new winston.transports.File({ filename: 'logs/all.log' }),
+];
+
+export const logger = winston.createLogger({
+  level: process.env.LOG_LEVEL || 'debug',
+  levels,
+  format,
+  transports,
+});

@@ -1,1 +1,64 @@
-import { Request, Response, NextFunction } from 'express';\nimport jwt from 'jsonwebtoken';\nimport { AppError } from './errorHandler.js';\n\ndeclare global {\n  namespace Express {\n    interface Request {\n      user?: {\n        userId: string;\n        email: string;\n        youtubeChannelId?: string;\n      };\n      token?: string;\n    }\n  }\n}\n\nexport const authMiddleware = (req: Request, res: Response, next: NextFunction) => {\n  try {\n    const token = req.headers.authorization?.split(' ')[1];\n\n    if (!token) {\n      throw new AppError('No token provided', 401);\n    }\n\n    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret') as any;\n    req.user = decoded.user;\n    req.token = token;\n    next();\n  } catch (error: any) {\n    if (error instanceof AppError) {\n      throw error;\n    }\n    throw new AppError('Invalid or expired token', 401);\n  }\n};\n\nexport const optionalAuth = (req: Request, res: Response, next: NextFunction) => {\n  try {\n    const token = req.headers.authorization?.split(' ')[1];\n    if (token) {\n      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret') as any;\n      req.user = decoded.user;\n      req.token = token;\n    }\n  } catch (error) {\n    // Optional auth, so we don't throw\n  }\n  next();\n};\n
+import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+import { AppError } from './errorHandler.js';
+
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        userId: string;
+        email: string;
+        youtubeChannelId?: string;
+      };
+      token?: string;
+    }
+  }
+}
+
+export const authMiddleware = (
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+
+    if (!token) {
+      throw new AppError('No token provided', 401);
+    }
+
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET || 'secret',
+    ) as any;
+    req.user = decoded.user;
+    req.token = token;
+    next();
+  } catch (error: any) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    throw new AppError('Invalid or expired token', 401);
+  }
+};
+
+export const optionalAuth = (
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (token) {
+      const decoded = jwt.verify(
+        token,
+        process.env.JWT_SECRET || 'secret',
+      ) as any;
+      req.user = decoded.user;
+      req.token = token;
+    }
+  } catch {
+    // Optional auth — ignore invalid tokens
+  }
+  next();
+};
