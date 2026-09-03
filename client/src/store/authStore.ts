@@ -1,1 +1,48 @@
-import { create } from 'zustand';\n\ninterface User {\n  id: string;\n  email: string;\n  name: string;\n  avatar?: string;\n}\n\ninterface AuthStore {\n  user: User | null;\n  token: string | null;\n  isLoading: boolean;\n  login: (token: string, user: User) => void;\n  logout: () => void;\n  setLoading: (loading: boolean) => void;\n  hydrate: () => void;\n}\n\nexport const useAuthStore = create<AuthStore>((set) => ({\n  user: null,\n  token: null,\n  isLoading: true,\n\n  login: (token: string, user: User) => {\n    localStorage.setItem('token', token);\n    localStorage.setItem('user', JSON.stringify(user));\n    set({ token, user, isLoading: false });\n  },\n\n  logout: () => {\n    localStorage.removeItem('token');\n    localStorage.removeItem('user');\n    set({ token: null, user: null });\n  },\n\n  setLoading: (loading: boolean) => set({ isLoading: loading }),\n\n  hydrate: () => {\n    const token = localStorage.getItem('token');\n    const user = localStorage.getItem('user');\n    if (token && user) {\n      set({ token, user: JSON.parse(user), isLoading: false });\n    } else {\n      set({ isLoading: false });\n    }\n  },\n}));\n
+import { create } from 'zustand';
+
+interface User {
+  id: string;
+  email: string;
+  name: string;
+  avatar?: string;
+}
+
+interface AuthStore {
+  user: User | null;
+  token: string | null;
+  isLoading: boolean;
+  login: (token: string, user: User) => void;
+  logout: () => void;
+  setLoading: (loading: boolean) => void;
+  hydrate: () => void;
+}
+
+export const useAuthStore = create<AuthStore>((set) => ({
+  user: null,
+  token: null,
+  isLoading: true,
+
+  login: (token: string, user: User) => {
+    localStorage.setItem('token', token);
+    localStorage.setItem('user', JSON.stringify(user));
+    set({ token, user, isLoading: false });
+  },
+
+  logout: () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    set({ token: null, user: null });
+  },
+
+  setLoading: (loading: boolean) => set({ isLoading: loading }),
+
+  hydrate: () => {
+    const token = localStorage.getItem('token');
+    const user = localStorage.getItem('user');
+    if (token && user) {
+      set({ token, user: JSON.parse(user), isLoading: false });
+    } else {
+      set({ isLoading: false });
+    }
+  },
+}));

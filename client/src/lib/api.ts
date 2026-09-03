@@ -1,1 +1,31 @@
-import axios from 'axios';\n\nconst API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';\n\nconst api = axios.create({\n  baseURL: API_URL,\n  headers: {\n    'Content-Type': 'application/json',\n  },\n});\n\napi.interceptors.request.use((config) => {\n  const token = localStorage.getItem('token');\n  if (token) {\n    config.headers.Authorization = `Bearer ${token}`;\n  }\n  return config;\n});\n\napi.interceptors.response.use(\n  (response) => response,\n  (error) => {\n    if (error.response?.status === 401) {\n      localStorage.removeItem('token');\n      window.location.href = '/login';\n    }\n    return Promise.reject(error);\n  }\n);\n\nexport default api;\n
+import axios from 'axios';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
+const api = axios.create({
+  baseURL: API_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('token');
+      window.location.href = '/login';
+    }
+    return Promise.reject(error);
+  },
+);
+
+export default api;

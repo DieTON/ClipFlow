@@ -1,1 +1,37 @@
-import { create } from 'zustand';\n\ninterface Clip {\n  id: string;\n  videoId: string;\n  title: string;\n  description?: string;\n  startSeconds: number;\n  duration: number;\n  platform: string;\n  status: string;\n  createdAt: string;\n}\n\ninterface ClipStore {\n  clips: Clip[];\n  loading: boolean;\n  setClips: (clips: Clip[]) => void;\n  addClip: (clip: Clip) => void;\n  removeClip: (id: string) => void;\n  setLoading: (loading: boolean) => void;\n}\n\nexport const useClipStore = create<ClipStore>((set) => ({\n  clips: [],\n  loading: false,\n\n  setClips: (clips: Clip[]) => set({ clips }),\n\n  addClip: (clip: Clip) =>\n    set((state) => ({ clips: [clip, ...state.clips] })),\n\n  removeClip: (id: string) =>\n    set((state) => ({ clips: state.clips.filter((c) => c.id !== id) })),\n\n  setLoading: (loading: boolean) => set({ loading }),\n}));\n
+import { create } from 'zustand';
+
+interface Clip {
+  id: string;
+  videoId: string;
+  title: string;
+  description?: string;
+  startSeconds: number;
+  duration: number;
+  platform: string;
+  status: string;
+  createdAt: string;
+}
+
+interface ClipStore {
+  clips: Clip[];
+  loading: boolean;
+  setClips: (clips: Clip[]) => void;
+  addClip: (clip: Clip) => void;
+  removeClip: (id: string) => void;
+  setLoading: (loading: boolean) => void;
+}
+
+export const useClipStore = create<ClipStore>((set) => ({
+  clips: [],
+  loading: false,
+
+  setClips: (clips: Clip[]) => set({ clips }),
+
+  addClip: (clip: Clip) =>
+    set((state) => ({ clips: [clip, ...state.clips] })),
+
+  removeClip: (id: string) =>
+    set((state) => ({ clips: state.clips.filter((c) => c.id !== id) })),
+
+  setLoading: (loading: boolean) => set({ loading }),
+}));
