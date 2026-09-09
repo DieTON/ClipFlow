@@ -1,6 +1,7 @@
 import express, { Express, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import path from 'path';
 import { logger } from './utils/logger.js';
 import { PrismaClient } from '@prisma/client';
 import authRoutes from './routes/auth.js';
@@ -30,6 +31,9 @@ app.use(
 );
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// Serve processed clips from disk (local dev — no S3 required)
+app.use('/videos', express.static(path.join(process.cwd(), 'videos')));
 
 app.use((req: Request, _res: Response, next: NextFunction) => {
   logger.info(`${req.method} ${req.path}`);
@@ -63,7 +67,6 @@ const server = app.listen(PORT, () => {
   logger.info(`🚀 ClipFlow Server running on port ${PORT}`);
   logger.info(`📚 Swagger docs at http://localhost:${PORT}/api/docs`);
 
-  // Start background workers (requires Redis)
   try {
     startWorkers();
   } catch (err: any) {
