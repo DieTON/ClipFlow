@@ -20,6 +20,7 @@ model User {
   clips      Clip[]
   schedules  Schedule[]
   oAuthToken OAuthToken?
+  analyses   VideoAnalysis[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -78,4 +79,27 @@ model Schedule {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+/// Saved analyze results so user can return and create more clips later
+model VideoAnalysis {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  videoId      String
+  sourceUrl    String?
+  title        String
+  description  String?
+  duration     String?
+  thumbnail    String?
+  channelTitle String?
+  /// JSON array of suggestion objects
+  suggestions  String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, videoId])
+  @@index([userId])
 }
