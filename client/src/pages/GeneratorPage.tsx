@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Search, Play, Plus, Loader, Film, Check } from 'lucide-react';
+import { Search, Play, Plus, Loader, Film, Check, Upload } from 'lucide-react';
 import api from '../lib/api';
 import { useClipStore } from '../store/clipStore';
 import toast from 'react-hot-toast';
@@ -27,10 +27,12 @@ interface SavedAnalysis {
 export function GeneratorPage() {
   const [url, setUrl] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [loadingSaved, setLoadingSaved] = useState(true);
   const [suggestions, setSuggestions] = useState<SuggestedClip[]>([]);
   const [videoInfo, setVideoInfo] = useState<any>(null);
   const [savedList, setSavedList] = useState<SavedAnalysis[]>([]);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const addClip = useClipStore((s) => s.addClip);
 
   const loadSavedList = async () => {
@@ -53,7 +55,12 @@ export function GeneratorPage() {
       const res = await api.get(`/api/videos/analyses/${videoId}`);
       setVideoInfo(res.data.videoInfo);
       setSuggestions(res.data.suggestions || []);
-      setUrl(res.data.analysis?.sourceUrl || `https://www.youtube.com/watch?v=${videoId}`);
+      if (!String(videoId).startsWith('file_')) {
+        setUrl(
+          res.data.analysis?.sourceUrl ||
+            `https://www.youtube.com/watch?v=${videoId}`,
+        );
+      }
       toast.success('Loaded saved suggestions');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (e) {
@@ -71,13 +78,52 @@ export function GeneratorPage() {
       const response = await api.post('/api/videos/analyze', { url });
       setVideoInfo(response.data.videoInfo);
       setSuggestions(response.data.suggestions);
-      toast.success('Video analyzed and saved!');
+      toast.success('YouTube video analyzed and saved!');
       await loadSavedList();
-    } catch (error) {
-      toast.error('Failed to analyze video');
+    } catch (error: any) {
+      const msg =
+        error?.response?.data?.error ||
+        error?.response?.data?.message ||
+        'Failed to analyze video';
+      toast.error(msg);
       console.error('Analysis failed:', error);
     } finally {
       setAnalyzing(false);
+    }
+  };
+
+  const handleUploadAnalyze = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedFile) {
+      toast.error('Choose a video file first');
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append('video', selectedFile);
+      form.append('title', selectedFile.name.replace(/\.[^.]+$/, ''));
+
+      const response = await api.post('/api/videos/analyze-upload', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 30 * 60 * 1000,
+      });
+
+      setVideoInfo(response.data.videoInfo);
+      setSuggestions(response.data.suggestions);
+      setUrl('');
+      toast.success('Uploaded video analyzed!');
+      await loadSavedList();
+    } catch (error: any) {
+      const msg =
+        error?.response?.data?.error ||
+        error?.response?.data?.message ||
+        'Failed to upload / analyze file';
+      toast.error(msg);
+      console.error('Upload analysis failed:', error);
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -94,6 +140,7 @@ export function GeneratorPage() {
         title: `${videoInfo.title} - ${suggestion.label || 'Clip'}`,
         startSeconds: suggestion.startSeconds,
         duration: suggestion.duration,
+        sourcePath: videoInfo.sourcePath,
       });
       addClip(response.data);
       setSuggestions((prev) =>
@@ -116,11 +163,20 @@ export function GeneratorPage() {
       <div>
         <h1 className="text-3xl font-bold text-slate-900">Clip Generator</h1>
         <p className="text-slate-600 mt-2">
-          Paste a YouTube URL once. Suggestions are saved — come back anytime and create more clips from the same video.
+          Two separate ways to start: YouTube link, or upload a video file from
+          Content Rewards / Drive.
         </p>
       </div>
 
-      <form onSubmit={handleAnalyze} className="card">
+      {/* ——— YouTube (unchanged path) ——— */}
+      <form onSubmit={handleAnalyze} className="card space-y-3">
+        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+          <Search size={20} />
+          From YouTube link
+        </h2>
+        <p className="text-sm text-slate-600">
+          Single video only (`watch?v=` or `youtu.be`). Not playlists.
+        </p>
         <div className="flex gap-2">
           <input
             type="text"
@@ -144,6 +200,44 @@ export function GeneratorPage() {
         </div>
       </form>
 
+      {/* ——— File upload (separate) ——— */}
+      <form onSubmit={handleUploadAnalyze} className="card space-y-3 border-2 border-dashed border-slate-200">
+        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+          <Upload size={20} />
+          From video file (not YouTube)
+        </h2>
+        <p className="text-sm text-slate-600">
+          Download the file from the Content Rewards / Drive link first, then
+          upload it here. Works for mp4, mov, webm, mkv.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+          <input
+            type="file"
+            accept="video/*,.mp4,.mov,.webm,.mkv"
+            onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+            className="block w-full text-sm text-slate-600 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-slate-100 file:font-medium"
+          />
+          <button
+            type="submit"
+            disabled={uploading || !selectedFile}
+            className="btn-primary flex items-center justify-center gap-2 disabled:opacity-50 whitespace-nowrap"
+          >
+            {uploading ? (
+              <Loader size={20} className="animate-spin" />
+            ) : (
+              <Upload size={20} />
+            )}
+            {uploading ? 'Uploading...' : 'Upload & analyze'}
+          </button>
+        </div>
+        {selectedFile && (
+          <p className="text-xs text-slate-500">
+            Selected: {selectedFile.name} (
+            {(selectedFile.size / (1024 * 1024)).toFixed(1)} MB)
+          </p>
+        )}
+      </form>
+
       {/* Saved videos */}
       <div className="card">
         <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
@@ -154,7 +248,8 @@ export function GeneratorPage() {
           <p className="text-slate-600 text-sm">Loading...</p>
         ) : savedList.length === 0 ? (
           <p className="text-slate-600 text-sm">
-            No saved analyses yet. Analyze a link above — it will appear here so you can reopen it later.
+            No saved analyses yet. Analyze a YouTube link or upload a file — it
+            will appear here.
           </p>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
@@ -172,14 +267,19 @@ export function GeneratorPage() {
                     className="w-20 h-14 object-cover rounded flex-shrink-0"
                   />
                 ) : (
-                  <div className="w-20 h-14 bg-slate-200 rounded flex-shrink-0" />
+                  <div className="w-20 h-14 bg-slate-200 rounded flex-shrink-0 flex items-center justify-center text-xs text-slate-500">
+                    {String(item.videoId).startsWith('file_') ? 'FILE' : 'YT'}
+                  </div>
                 )}
                 <div className="min-w-0">
                   <p className="font-medium text-slate-900 text-sm line-clamp-2">
                     {item.title}
                   </p>
                   <p className="text-xs text-slate-500 mt-1">
-                    Click to open suggestions again
+                    {String(item.videoId).startsWith('file_')
+                      ? 'Uploaded file'
+                      : 'YouTube'}{' '}
+                    · Click to open suggestions
                   </p>
                 </div>
               </button>
@@ -199,10 +299,19 @@ export function GeneratorPage() {
               />
             )}
             <div className="flex-1">
+              <p className="text-xs font-medium text-blue-600 mb-1">
+                {videoInfo.sourceType === 'upload' ||
+                String(videoInfo.videoId).startsWith('file_')
+                  ? 'Source: uploaded file'
+                  : 'Source: YouTube'}
+              </p>
               <h2 className="text-2xl font-bold text-slate-900">{videoInfo.title}</h2>
               <p className="text-slate-600 mt-2">{videoInfo.description}</p>
               <p className="text-sm text-slate-500 mt-4">
                 Duration: {videoInfo.duration}
+                {videoInfo.durationSeconds
+                  ? ` (~${videoInfo.durationSeconds}s)`
+                  : ''}
               </p>
             </div>
           </div>
@@ -213,7 +322,8 @@ export function GeneratorPage() {
         <div className="space-y-4">
           <h2 className="text-2xl font-bold text-slate-900">Suggestions</h2>
           <p className="text-slate-600 text-sm">
-            Create one now, leave, and come back later for the other parts of the same video.
+            Create one now, leave, and come back later for other parts of the
+            same video.
           </p>
           <div className="grid gap-4">
             {suggestions.map((suggestion, idx) => (
