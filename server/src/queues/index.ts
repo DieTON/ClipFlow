@@ -24,22 +24,41 @@ export function startWorkers() {
   }
   workersStarted = true;
 
+  // Long downloads + FFmpeg + captions can take 30–90+ minutes
   const clipWorker = new Worker(
     'clip-processing',
     async (job: Job) => processClipJob(job),
-    { connection, concurrency: 2 },
+    {
+      connection,
+      concurrency: 1,
+      lockDuration: 600000, // 10 minutes between lock renewals
+      stalledInterval: 120000, // check stalled every 2 min
+      maxStalledCount: 5,
+    },
   );
 
   const publishWorker = new Worker(
     'clip-publishing',
     async (job: Job) => processPublishJob(job),
-    { connection, concurrency: 1 },
+    {
+      connection,
+      concurrency: 1,
+      lockDuration: 300000,
+      stalledInterval: 60000,
+      maxStalledCount: 3,
+    },
   );
 
   const scheduleWorker = new Worker(
     'scheduled-posts',
     async (job: Job) => processScheduleJob(job),
-    { connection, concurrency: 1 },
+    {
+      connection,
+      concurrency: 1,
+      lockDuration: 300000,
+      stalledInterval: 60000,
+      maxStalledCount: 3,
+    },
   );
 
   for (const worker of [clipWorker, publishWorker, scheduleWorker]) {
@@ -51,7 +70,7 @@ export function startWorkers() {
     });
   }
 
-  logger.info('BullMQ workers started');
+  logger.info('BullMQ workers started (long lock for clip processing)');
 }
 
 export async function enqueueClipProcessing(data: {
@@ -61,12 +80,11 @@ export async function enqueueClipProcessing(data: {
   startSeconds: number;
   duration: number;
   platform: string;
-  /** Local file path when source is an uploaded video (not YouTube) */
   sourcePath?: string;
 }) {
   return clipQueue.add('process-clip', data, {
-    attempts: 3,
-    backoff: { type: 'exponential', delay: 5000 },
+    attempts: 2,
+    backoff: { type: 'exponential', delay: 10000 },
     removeOnComplete: 100,
     removeOnFail: 50,
   });
