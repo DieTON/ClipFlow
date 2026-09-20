@@ -61,6 +61,8 @@ export async function enqueueClipProcessing(data: {
   startSeconds: number;
   duration: number;
   platform: string;
+  /** Local file path when source is an uploaded video (not YouTube) */
+  sourcePath?: string;
 }) {
   return clipQueue.add('process-clip', data, {
     attempts: 3,

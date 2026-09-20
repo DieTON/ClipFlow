@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import path from 'path';
 import { authMiddleware } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
 import { prisma } from '../index.js';
@@ -49,6 +50,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
       duration,
       platform,
       process = true,
+      sourcePath,
     } = req.body;
     const userId = req.user?.userId;
 
@@ -65,11 +67,27 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
         startSeconds: startSeconds ?? 0,
         duration: duration ?? 30,
         platform: platform || 'youtube',
-        status: process ? 'draft' : 'draft',
+        status: 'draft',
       },
     });
 
     if (process) {
+      // Resolve local upload path if this is a file_* video
+      let resolvedSource = sourcePath as string | undefined;
+      if (!resolvedSource && String(videoId).startsWith('file_')) {
+        const base = path.join('./videos/uploads', userId!, String(videoId));
+        for (const ext of ['.mp4', '.mov', '.webm', '.mkv']) {
+          try {
+            const { promises: fs } = await import('fs');
+            await fs.access(base + ext);
+            resolvedSource = base + ext;
+            break;
+          } catch {
+            /* next */
+          }
+        }
+      }
+
       await enqueueClipProcessing({
         clipId: clip.id,
         userId: userId!,
@@ -77,6 +95,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
         startSeconds: clip.startSeconds,
         duration: clip.duration,
         platform: clip.platform,
+        sourcePath: resolvedSource,
       });
 
       await prisma.clip.update({
@@ -107,6 +126,21 @@ router.post(
         throw new AppError('Clip not found', 404);
       }
 
+      let sourcePath: string | undefined;
+      if (String(clip.videoId).startsWith('file_')) {
+        const base = path.join('./videos/uploads', userId!, clip.videoId);
+        const { promises: fs } = await import('fs');
+        for (const ext of ['.mp4', '.mov', '.webm', '.mkv']) {
+          try {
+            await fs.access(base + ext);
+            sourcePath = base + ext;
+            break;
+          } catch {
+            /* next */
+          }
+        }
+      }
+
       await enqueueClipProcessing({
         clipId: clip.id,
         userId: userId!,
@@ -114,6 +148,7 @@ router.post(
         startSeconds: clip.startSeconds,
         duration: clip.duration,
         platform: clip.platform,
+        sourcePath,
       });
 
       await prisma.clip.update({
