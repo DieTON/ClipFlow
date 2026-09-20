@@ -33,6 +33,8 @@ export function GeneratorPage() {
   const [videoInfo, setVideoInfo] = useState<any>(null);
   const [savedList, setSavedList] = useState<SavedAnalysis[]>([]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  /** Burn app captions onto the Short. Turn OFF if source already has captions. */
+  const [burnCaptions, setBurnCaptions] = useState(true);
   const addClip = useClipStore((s) => s.addClip);
 
   const loadSavedList = async () => {
@@ -141,6 +143,7 @@ export function GeneratorPage() {
         startSeconds: suggestion.startSeconds,
         duration: suggestion.duration,
         sourcePath: videoInfo.sourcePath,
+        burnCaptions,
       });
       addClip(response.data);
       setSuggestions((prev) =>
@@ -151,7 +154,11 @@ export function GeneratorPage() {
             : s,
         ),
       );
-      toast.success('Clip created — processing in background');
+      toast.success(
+        burnCaptions
+          ? 'Clip created (with captions) — processing…'
+          : 'Clip created (no extra captions) — processing…',
+      );
     } catch (error) {
       toast.error('Failed to create clip');
       console.error('Creation failed:', error);
@@ -168,7 +175,6 @@ export function GeneratorPage() {
         </p>
       </div>
 
-      {/* ——— YouTube (unchanged path) ——— */}
       <form onSubmit={handleAnalyze} className="card space-y-3">
         <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
           <Search size={20} />
@@ -200,15 +206,17 @@ export function GeneratorPage() {
         </div>
       </form>
 
-      {/* ——— File upload (separate) ——— */}
-      <form onSubmit={handleUploadAnalyze} className="card space-y-3 border-2 border-dashed border-slate-200">
+      <form
+        onSubmit={handleUploadAnalyze}
+        className="card space-y-3 border-2 border-dashed border-slate-200"
+      >
         <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
           <Upload size={20} />
           From video file (not YouTube)
         </h2>
         <p className="text-sm text-slate-600">
-          Download the file from the Content Rewards / Drive link first, then
-          upload it here. Works for mp4, mov, webm, mkv.
+          Download the file from Content Rewards / Drive first, then upload it
+          here.
         </p>
         <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
           <input
@@ -238,7 +246,6 @@ export function GeneratorPage() {
         )}
       </form>
 
-      {/* Saved videos */}
       <div className="card">
         <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
           <Film size={20} />
@@ -248,8 +255,7 @@ export function GeneratorPage() {
           <p className="text-slate-600 text-sm">Loading...</p>
         ) : savedList.length === 0 ? (
           <p className="text-slate-600 text-sm">
-            No saved analyses yet. Analyze a YouTube link or upload a file — it
-            will appear here.
+            No saved analyses yet.
           </p>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
@@ -279,7 +285,7 @@ export function GeneratorPage() {
                     {String(item.videoId).startsWith('file_')
                       ? 'Uploaded file'
                       : 'YouTube'}{' '}
-                    · Click to open suggestions
+                    · Click to open
                   </p>
                 </div>
               </button>
@@ -309,9 +315,6 @@ export function GeneratorPage() {
               <p className="text-slate-600 mt-2">{videoInfo.description}</p>
               <p className="text-sm text-slate-500 mt-4">
                 Duration: {videoInfo.duration}
-                {videoInfo.durationSeconds
-                  ? ` (~${videoInfo.durationSeconds}s)`
-                  : ''}
               </p>
             </div>
           </div>
@@ -320,11 +323,26 @@ export function GeneratorPage() {
 
       {suggestions.length > 0 && (
         <div className="space-y-4">
-          <h2 className="text-2xl font-bold text-slate-900">Suggestions</h2>
-          <p className="text-slate-600 text-sm">
-            Create one now, leave, and come back later for other parts of the
-            same video.
-          </p>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <h2 className="text-2xl font-bold text-slate-900">Suggestions</h2>
+              <p className="text-slate-600 text-sm mt-1">
+                Turn captions off if the source video already has text on screen.
+              </p>
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer select-none bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
+              <input
+                type="checkbox"
+                checked={burnCaptions}
+                onChange={(e) => setBurnCaptions(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-300"
+              />
+              <span className="text-sm font-medium text-slate-900">
+                Add captions to clip
+              </span>
+            </label>
+          </div>
+
           <div className="grid gap-4">
             {suggestions.map((suggestion, idx) => (
               <div key={idx} className="card">
@@ -343,24 +361,11 @@ export function GeneratorPage() {
                       )}
                     </div>
                     <p className="text-slate-900 font-medium">{suggestion.reason}</p>
-                    <div className="mt-2 flex items-center gap-2">
-                      <div className="flex-1 bg-slate-200 rounded-full h-2">
-                        <div
-                          className="bg-green-500 h-full rounded-full"
-                          style={{
-                            width: `${Math.min(100, (suggestion.score || 0) * 100)}%`,
-                          }}
-                        />
-                      </div>
-                      <span className="text-sm font-medium text-slate-600">
-                        {((suggestion.score || 0) * 100).toFixed(0)}% match
-                      </span>
-                    </div>
                   </div>
                   {suggestion.alreadyCreated ? (
                     <span className="flex items-center gap-1 text-sm text-green-700 bg-green-50 px-3 py-2 rounded-lg whitespace-nowrap">
                       <Check size={16} />
-                      Created{suggestion.clipStatus ? ` (${suggestion.clipStatus})` : ''}
+                      Created
                     </span>
                   ) : (
                     <button

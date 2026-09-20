@@ -24,15 +24,14 @@ export function startWorkers() {
   }
   workersStarted = true;
 
-  // Long downloads + FFmpeg + captions can take 30–90+ minutes
   const clipWorker = new Worker(
     'clip-processing',
     async (job: Job) => processClipJob(job),
     {
       connection,
       concurrency: 1,
-      lockDuration: 600000, // 10 minutes between lock renewals
-      stalledInterval: 120000, // check stalled every 2 min
+      lockDuration: 600000,
+      stalledInterval: 120000,
       maxStalledCount: 5,
     },
   );
@@ -81,6 +80,8 @@ export async function enqueueClipProcessing(data: {
   duration: number;
   platform: string;
   sourcePath?: string;
+  /** When false, skip subtitle download and burn-in */
+  burnCaptions?: boolean;
 }) {
   return clipQueue.add('process-clip', data, {
     attempts: 2,

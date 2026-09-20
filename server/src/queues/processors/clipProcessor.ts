@@ -7,9 +7,6 @@ import { VideoDownloader } from '../../services/videoDownloader.js';
 import { VideoProcessor } from '../../services/videoProcessor.js';
 import { CaptionService } from '../../services/captionService.js';
 
-/**
- * Process a clip: source → cut → vertical → captions (if available) → ready + user Videos folder.
- */
 export async function processClipJob(job: Job) {
   const {
     clipId,
@@ -19,8 +16,11 @@ export async function processClipJob(job: Job) {
     duration,
     platform,
     sourcePath: jobSourcePath,
+    burnCaptions = true,
   } = job.data;
-  logger.info(`Processing clip ${clipId} for video ${videoId}`);
+  logger.info(
+    `Processing clip ${clipId} for video ${videoId} (captions: ${burnCaptions ? 'on' : 'off'})`,
+  );
 
   await prisma.clip.update({
     where: { id: clipId },
@@ -63,12 +63,16 @@ export async function processClipJob(job: Job) {
       logger.info(`Using uploaded source file: ${sourcePath}`);
     } else {
       sourcePath = await VideoDownloader.download(videoId, workDir);
-      srtPath = await CaptionService.downloadYoutubeSubs(videoId, workDir);
     }
 
-    // Optional Whisper for local uploads (if installed)
-    if (isLocalFile && !srtPath) {
-      srtPath = await CaptionService.transcribeWithWhisper(sourcePath, workDir);
+    if (burnCaptions) {
+      if (!isLocalFile) {
+        srtPath = await CaptionService.downloadYoutubeSubs(videoId, workDir);
+      } else {
+        srtPath = await CaptionService.transcribeWithWhisper(sourcePath, workDir);
+      }
+    } else {
+      logger.info('Captions disabled for this clip — skipping burn-in');
     }
 
     const clipPath = await VideoProcessor.extractClip({
@@ -84,8 +88,7 @@ export async function processClipJob(job: Job) {
       platform,
     );
 
-    // Burn captions when we have an SRT
-    if (srtPath) {
+    if (burnCaptions && srtPath) {
       const captioned = await CaptionService.burnCaptions({
         videoPath: transcodedPath,
         srtPath,
@@ -97,8 +100,6 @@ export async function processClipJob(job: Job) {
         transcodedPath = captioned;
         logger.info('Captions burned into clip');
       }
-    } else {
-      logger.info('No captions available for this source — exporting without');
     }
 
     const thumbPath = await VideoProcessor.generateThumbnail(transcodedPath, 1);
@@ -111,7 +112,6 @@ export async function processClipJob(job: Job) {
     await fs.copyFile(transcodedPath, finalVideoPath);
     await fs.copyFile(thumbPath, finalThumbPath);
 
-    // Also copy to easy-to-find folder: C:\Users\...\Videos\ClipFlow
     const clipRow = await prisma.clip.findUnique({ where: { id: clipId } });
     await CaptionService.exportToUserVideos(
       finalVideoPath,

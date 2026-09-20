@@ -51,6 +51,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
       platform,
       process = true,
       sourcePath,
+      burnCaptions = true,
     } = req.body;
     const userId = req.user?.userId;
 
@@ -72,7 +73,6 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
     });
 
     if (process) {
-      // Resolve local upload path if this is a file_* video
       let resolvedSource = sourcePath as string | undefined;
       if (!resolvedSource && String(videoId).startsWith('file_')) {
         const base = path.join('./videos/uploads', userId!, String(videoId));
@@ -96,6 +96,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
         duration: clip.duration,
         platform: clip.platform,
         sourcePath: resolvedSource,
+        burnCaptions: burnCaptions !== false && burnCaptions !== 'false',
       });
 
       await prisma.clip.update({
@@ -118,6 +119,7 @@ router.post(
   async (req: Request, res: Response) => {
     try {
       const userId = req.user?.userId;
+      const burnCaptions = req.body?.burnCaptions !== false;
       const clip = await prisma.clip.findUnique({
         where: { id: req.params.id },
       });
@@ -149,6 +151,7 @@ router.post(
         duration: clip.duration,
         platform: clip.platform,
         sourcePath,
+        burnCaptions,
       });
 
       await prisma.clip.update({
