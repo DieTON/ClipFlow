@@ -13,7 +13,6 @@ interface SrtCue {
 }
 
 function parseTimestamp(ts: string): number {
-  // 00:00:01,000 or 00:00:01.000
   const norm = ts.trim().replace(',', '.');
   const parts = norm.split(':');
   if (parts.length === 3) {
@@ -28,13 +27,13 @@ function parseTimestamp(ts: string): number {
   return parseFloat(norm) || 0;
 }
 
-function formatSrtTime(sec: number): string {
+function formatAssTime(sec: number): string {
   const s = Math.max(0, sec);
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   const whole = Math.floor(s % 60);
-  const ms = Math.round((s - Math.floor(s)) * 1000);
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(whole).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
+  const cs = Math.round((s - Math.floor(s)) * 100);
+  return `${h}:${String(m).padStart(2, '0')}:${String(whole).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
 }
 
 function parseSrt(content: string): SrtCue[] {
@@ -50,6 +49,7 @@ function parseSrt(content: string): SrtCue[] {
       .slice(lines.indexOf(timeLine) + 1)
       .join(' ')
       .replace(/<[^>]+>/g, '')
+      .replace(/\s+/g, ' ')
       .trim();
     if (!text) continue;
     cues.push({
@@ -77,24 +77,63 @@ function sliceSrt(
     .filter((c) => c.end > c.start + 0.05);
 }
 
-function cuesToSrt(cues: SrtCue[]): string {
-  return cues
-    .map(
-      (c, i) =>
-        `${i + 1}\n${formatSrtTime(c.start)} --> ${formatSrtTime(c.end)}\n${c.text}\n`,
-    )
-    .join('\n');
+/** Keep lines short so text stays in a small bottom band */
+function wrapCaptionText(text: string, maxChars = 28): string {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = '';
+  for (const w of words) {
+    const next = current ? `${current} ${w}` : w;
+    if (next.length > maxChars && current) {
+      lines.push(current);
+      current = w;
+      if (lines.length >= 2) {
+        // Max 2 lines — put rest on second line truncated lightly
+        break;
+      }
+    } else {
+      current = next;
+    }
+  }
+  if (current && lines.length < 2) lines.push(current);
+  else if (current && lines.length >= 2) {
+    lines[1] = `${lines[1]} ${current}`.slice(0, maxChars + 8);
+  }
+  return lines.join('\\N');
 }
 
-/** Escape path for ffmpeg subtitles filter on Windows */
+function cuesToAss(cues: SrtCue[]): string {
+  // PlayRes must match vertical Short so Fontsize is predictable
+  const header = `[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,36,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,3,0,2,50,50,140,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+`;
+
+  const events = cues
+    .map((c) => {
+      const body = wrapCaptionText(c.text);
+      return `Dialogue: 0,${formatAssTime(c.start)},${formatAssTime(c.end)},Default,,0,0,0,,${body}`;
+    })
+    .join('\n');
+
+  return header + events + '\n';
+}
+
 function ffmpegSubPath(p: string): string {
   return p.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
 }
 
 export class CaptionService {
-  /**
-   * Download YouTube auto-captions (SRT) next to the video if available.
-   */
   static async downloadYoutubeSubs(
     videoId: string,
     outputDir: string,
@@ -150,10 +189,6 @@ export class CaptionService {
     });
   }
 
-  /**
-   * Try local Whisper CLI for uploaded files (optional).
-   * Install: pip install openai-whisper
-   */
   static async transcribeWithWhisper(
     videoPath: string,
     outputDir: string,
@@ -199,7 +234,7 @@ export class CaptionService {
   }
 
   /**
-   * Slice full-video SRT to clip window and burn into vertical video.
+   * Burn smaller bottom captions (1080x1920 ASS) so faces stay clear.
    */
   static async burnCaptions(options: {
     videoPath: string;
@@ -219,15 +254,14 @@ export class CaptionService {
         return null;
       }
 
-      const clipSrtPath = path.join(outputDir, `${uuid()}-clip.srt`);
-      await fs.writeFile(clipSrtPath, cuesToSrt(cues), 'utf8');
+      const clipAssPath = path.join(outputDir, `${uuid()}-clip.ass`);
+      await fs.writeFile(clipAssPath, cuesToAss(cues), 'utf8');
 
       const outPath = path.join(outputDir, `${uuid()}-captioned.mp4`);
-      const style =
-        'FontName=Arial,FontSize=16,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=2,Shadow=0,Alignment=2,MarginV=80';
 
       await new Promise<void>((resolve, reject) => {
-        const filter = `subtitles='${ffmpegSubPath(path.resolve(clipSrtPath))}':force_style='${style}'`;
+        // No force_style — sizes come from ASS PlayRes 1080x1920
+        const filter = `ass='${ffmpegSubPath(path.resolve(clipAssPath))}'`;
         ffmpeg(videoPath)
           .videoFilters([filter])
           .outputOptions([
@@ -238,7 +272,7 @@ export class CaptionService {
             '-movflags +faststart',
           ])
           .output(outPath)
-          .on('start', (cmd) => logger.info('Burning captions:', cmd))
+          .on('start', (cmd) => logger.info('Burning captions (compact):', cmd))
           .on('end', () => {
             logger.info(`Captioned video: ${outPath}`);
             resolve();
@@ -257,9 +291,6 @@ export class CaptionService {
     }
   }
 
-  /**
-   * Copy finished clip to a friendly user folder: ~/Videos/ClipFlow
-   */
   static async exportToUserVideos(
     filePath: string,
     displayName: string,
