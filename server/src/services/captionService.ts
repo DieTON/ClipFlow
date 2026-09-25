@@ -77,33 +77,20 @@ function sliceSrt(
     .filter((c) => c.end > c.start + 0.05);
 }
 
-/** Keep lines short so text stays in a small bottom band */
-function wrapCaptionText(text: string, maxChars = 28): string {
-  const words = text.split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-  let current = '';
-  for (const w of words) {
-    const next = current ? `${current} ${w}` : w;
-    if (next.length > maxChars && current) {
-      lines.push(current);
-      current = w;
-      if (lines.length >= 2) {
-        // Max 2 lines — put rest on second line truncated lightly
-        break;
-      }
-    } else {
-      current = next;
-    }
+/** Group words into lines of max ~3–4 words for Shorts look */
+function chunkWords(words: string[], maxPerLine = 4): string[][] {
+  const chunks: string[][] = [];
+  for (let i = 0; i < words.length; i += maxPerLine) {
+    chunks.push(words.slice(i, i + maxPerLine));
   }
-  if (current && lines.length < 2) lines.push(current);
-  else if (current && lines.length >= 2) {
-    lines[1] = `${lines[1]} ${current}`.slice(0, maxChars + 8);
-  }
-  return lines.join('\\N');
+  return chunks.length ? chunks : [['']];
 }
 
-function cuesToAss(cues: SrtCue[]): string {
-  // PlayRes must match vertical Short so Fontsize is predictable
+/**
+ * Karaoke-style ASS: active word in bright yellow, others white.
+ * Bottom third, bold, strong outline — modern Shorts look.
+ */
+function cuesToKaraokeAss(cues: SrtCue[]): string {
   const header = `[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -113,20 +100,50 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,36,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,3,0,2,50,50,140,1
+Style: Karaoke,Arial Black,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,0,2,60,60,160,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
 
-  const events = cues
-    .map((c) => {
-      const body = wrapCaptionText(c.text);
-      return `Dialogue: 0,${formatAssTime(c.start)},${formatAssTime(c.end)},Default,,0,0,0,,${body}`;
-    })
-    .join('\n');
+  const events: string[] = [];
 
-  return header + events + '\n';
+  for (const cue of cues) {
+    const words = cue.text.split(/\s+/).filter(Boolean);
+    if (words.length === 0) continue;
+
+    const chunks = chunkWords(words, 4);
+    const cueDur = Math.max(0.15, cue.end - cue.start);
+    // Time share per word across full cue
+    const allWords = chunks.flat();
+    const wordDur = cueDur / allWords.length;
+    let t = cue.start;
+
+    let globalIdx = 0;
+    for (const chunk of chunks) {
+      for (let i = 0; i < chunk.length; i++) {
+        const wStart = t;
+        const wEnd = Math.min(cue.end, t + wordDur);
+        t = wEnd;
+
+        // Build line: highlight current word in yellow (ASS BGR: &H00FFFF& = yellow)
+        const parts = chunk.map((w, j) => {
+          if (j === i) {
+            return `{\\c&H0000FFFF&\\b1}${w}{\\c&H00FFFFFF&\\b0}`;
+          }
+          return w;
+        });
+        const line = parts.join(' ');
+
+        events.push(
+          `Dialogue: 0,${formatAssTime(wStart)},${formatAssTime(wEnd)},Karaoke,,0,0,0,,${line}`,
+        );
+        globalIdx++;
+      }
+    }
+  }
+
+  return header + events.join('\n') + '\n';
 }
 
 function ffmpegSubPath(p: string): string {
@@ -234,7 +251,7 @@ export class CaptionService {
   }
 
   /**
-   * Burn smaller bottom captions (1080x1920 ASS) so faces stay clear.
+   * Burn modern karaoke captions (word highlight) onto vertical Short.
    */
   static async burnCaptions(options: {
     videoPath: string;
@@ -254,13 +271,12 @@ export class CaptionService {
         return null;
       }
 
-      const clipAssPath = path.join(outputDir, `${uuid()}-clip.ass`);
-      await fs.writeFile(clipAssPath, cuesToAss(cues), 'utf8');
+      const clipAssPath = path.join(outputDir, `${uuid()}-karaoke.ass`);
+      await fs.writeFile(clipAssPath, cuesToKaraokeAss(cues), 'utf8');
 
       const outPath = path.join(outputDir, `${uuid()}-captioned.mp4`);
 
       await new Promise<void>((resolve, reject) => {
-        // No force_style — sizes come from ASS PlayRes 1080x1920
         const filter = `ass='${ffmpegSubPath(path.resolve(clipAssPath))}'`;
         ffmpeg(videoPath)
           .videoFilters([filter])
@@ -272,7 +288,7 @@ export class CaptionService {
             '-movflags +faststart',
           ])
           .output(outPath)
-          .on('start', (cmd) => logger.info('Burning captions (compact):', cmd))
+          .on('start', (cmd) => logger.info('Burning karaoke captions:', cmd))
           .on('end', () => {
             logger.info(`Captioned video: ${outPath}`);
             resolve();
