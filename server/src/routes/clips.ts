@@ -11,12 +11,10 @@ const router = express.Router();
 router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const userId = req.user?.userId;
-
     const clips = await prisma.clip.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
     });
-
     res.json({ clips });
   } catch (error: any) {
     logger.error('Fetch clips error:', error.message);
@@ -28,11 +26,7 @@ router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const userId = req.user?.userId;
     const clip = await prisma.clip.findUnique({ where: { id: req.params.id } });
-
-    if (!clip || clip.userId !== userId) {
-      throw new AppError('Clip not found', 404);
-    }
-
+    if (!clip || clip.userId !== userId) throw new AppError('Clip not found', 404);
     res.json({ clip });
   } catch (error: any) {
     logger.error('Fetch clip error:', error.message);
@@ -52,6 +46,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
       process = true,
       sourcePath,
       burnCaptions = true,
+      addLogo = false,
     } = req.body;
     const userId = req.user?.userId;
 
@@ -99,6 +94,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
         platform: clip.platform,
         sourcePath: resolvedSource,
         burnCaptions: burnCaptions !== false && burnCaptions !== 'false',
+        addLogo: addLogo === true || addLogo === 'true',
       });
     }
 
@@ -116,6 +112,7 @@ router.post(
     try {
       const userId = req.user?.userId;
       const burnCaptions = req.body?.burnCaptions !== false;
+      const addLogo = req.body?.addLogo === true;
       const clip = await prisma.clip.findUnique({
         where: { id: req.params.id },
       });
@@ -157,6 +154,7 @@ router.post(
         platform: clip.platform,
         sourcePath,
         burnCaptions,
+        addLogo,
       });
 
       res.json({ message: 'Processing enqueued', clipId: clip.id });
@@ -171,15 +169,9 @@ router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const userId = req.user?.userId;
-
     const clip = await prisma.clip.findUnique({ where: { id } });
-
-    if (!clip || clip.userId !== userId) {
-      throw new AppError('Clip not found', 404);
-    }
-
+    if (!clip || clip.userId !== userId) throw new AppError('Clip not found', 404);
     await prisma.clip.delete({ where: { id } });
-
     res.json({ message: 'Clip deleted' });
   } catch (error: any) {
     logger.error('Delete clip error:', error.message);

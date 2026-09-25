@@ -6,6 +6,7 @@ import { v4 as uuid } from 'uuid';
 import ffmpeg from 'fluent-ffmpeg';
 import { YouTubeService } from '../services/youtubeService.js';
 import { VideoProcessor } from '../services/videoProcessor.js';
+import { LogoService } from '../services/logoService.js';
 import { logger } from '../utils/logger.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { authMiddleware } from '../middleware/auth.js';
@@ -33,20 +34,58 @@ const storage = multer.diskStorage({
     const id = `file_${uuid().replace(/-/g, '').slice(0, 16)}`;
     const ext = path.extname(file.originalname || '').toLowerCase() || '.mp4';
     const safeExt = ['.mp4', '.mov', '.webm', '.mkv'].includes(ext) ? ext : '.mp4';
-    // Store id in filename so we can recover videoId
     cb(null, `${id}${safeExt}`);
   },
 });
 
 const upload = multer({
   storage,
-  limits: { fileSize: 2 * 1024 * 1024 * 1024 }, // 2GB
+  limits: { fileSize: 2 * 1024 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ok =
       file.mimetype?.startsWith('video/') ||
       /\.(mp4|mov|webm|mkv)$/i.test(file.originalname || '');
     if (ok) cb(null, true);
     else cb(new Error('Only video files are allowed (mp4, mov, webm, mkv)'));
+  },
+});
+
+const logoStorage = multer.diskStorage({
+  destination: async (req, _file, cb) => {
+    try {
+      const userId = (req as any).user?.userId || 'anonymous';
+      const dir = LogoService.logoDir(userId);
+      await fs.mkdir(dir, { recursive: true });
+      // Clear old logos so only one is active
+      try {
+        const existing = await fs.readdir(dir);
+        for (const f of existing) {
+          await fs.unlink(path.join(dir, f)).catch(() => {});
+        }
+      } catch {
+        /* empty */
+      }
+      cb(null, dir);
+    } catch (e: any) {
+      cb(e, path.join(process.cwd(), 'videos', 'logos'));
+    }
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase() || '.png';
+    const safe = ['.png', '.jpg', '.jpeg', '.webp'].includes(ext) ? ext : '.png';
+    cb(null, `brand-logo${safe}`);
+  },
+});
+
+const logoUpload = multer({
+  storage: logoStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ok =
+      file.mimetype?.startsWith('image/') ||
+      /\.(png|jpg|jpeg|webp)$/i.test(file.originalname || '');
+    if (ok) cb(null, true);
+    else cb(new Error('Logo must be PNG, JPG, or WEBP'));
   },
 });
 
@@ -72,9 +111,6 @@ function secondsToIso(total: number): string {
   return out;
 }
 
-/**
- * GET /api/videos/analyses
- */
 router.get('/analyses', authMiddleware, async (req: Request, res: Response) => {
   try {
     const userId = req.user?.userId;
@@ -100,9 +136,6 @@ router.get('/analyses', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-/**
- * GET /api/videos/analyses/:videoId
- */
 router.get(
   '/analyses/:videoId',
   authMiddleware,
@@ -168,11 +201,38 @@ router.get(
   },
 );
 
-/**
- * POST /api/videos/analyze-upload
- * Upload a local/downloaded video file (not YouTube) and get clip suggestions.
- * Separate from YouTube URL analyze.
- */
+/** Upload / replace brand logo for watermark */
+router.post(
+  '/logo',
+  authMiddleware,
+  (req, res, next) => {
+    logoUpload.single('logo')(req, res, (err) => {
+      if (err) return next(new AppError(err.message || 'Logo upload failed', 400));
+      next();
+    });
+  },
+  async (req: Request, res: Response) => {
+    try {
+      if (!req.file) throw new AppError('No logo file', 400);
+      const userId = req.user?.userId!;
+      const logoPath = await LogoService.findUserLogo(userId);
+      res.json({
+        ok: true,
+        path: logoPath,
+        message: 'Brand logo saved — enable “Add brand logo” when creating clips',
+      });
+    } catch (error: any) {
+      logger.error('Logo upload error:', error.message);
+      throw error;
+    }
+  },
+);
+
+router.get('/logo', authMiddleware, async (req: Request, res: Response) => {
+  const logoPath = await LogoService.findUserLogo(req.user?.userId!);
+  res.json({ hasLogo: !!logoPath });
+});
+
 router.post(
   '/analyze-upload',
   authMiddleware,
@@ -188,9 +248,7 @@ router.post(
   async (req: Request, res: Response) => {
     try {
       const userId = req.user?.userId;
-      if (!req.file) {
-        throw new AppError('No video file uploaded', 400);
-      }
+      if (!req.file) throw new AppError('No video file uploaded', 400);
 
       const filePath = req.file.path;
       const baseName = path.basename(req.file.filename, path.extname(req.file.filename));
@@ -242,9 +300,7 @@ router.post(
       };
 
       await prisma.videoAnalysis.upsert({
-        where: {
-          userId_videoId: { userId: userId!, videoId },
-        },
+        where: { userId_videoId: { userId: userId!, videoId } },
         create: {
           userId: userId!,
           videoId,
@@ -281,18 +337,12 @@ router.post(
   },
 );
 
-/**
- * POST /api/videos/analyze
- * Analyze a YouTube URL (unchanged).
- */
 router.post('/analyze', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { url, goal, platforms } = req.body;
     const userId = req.user?.userId;
 
-    if (!url) {
-      throw new AppError('URL is required', 400);
-    }
+    if (!url) throw new AppError('URL is required', 400);
 
     logger.info(`Analyzing video: ${url}`);
 
@@ -336,9 +386,7 @@ router.post('/analyze', authMiddleware, async (req: Request, res: Response) => {
     };
 
     await prisma.videoAnalysis.upsert({
-      where: {
-        userId_videoId: { userId: userId!, videoId },
-      },
+      where: { userId_videoId: { userId: userId!, videoId } },
       create: {
         userId: userId!,
         videoId,
