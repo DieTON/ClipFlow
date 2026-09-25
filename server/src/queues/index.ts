@@ -80,8 +80,8 @@ export async function enqueueClipProcessing(data: {
   duration: number;
   platform: string;
   sourcePath?: string;
-  /** When false, skip subtitle download and burn-in */
   burnCaptions?: boolean;
+  addLogo?: boolean;
 }) {
   return clipQueue.add('process-clip', data, {
     attempts: 2,

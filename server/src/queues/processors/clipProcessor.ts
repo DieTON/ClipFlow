@@ -6,6 +6,7 @@ import { logger } from '../../utils/logger.js';
 import { VideoDownloader } from '../../services/videoDownloader.js';
 import { VideoProcessor } from '../../services/videoProcessor.js';
 import { CaptionService } from '../../services/captionService.js';
+import { LogoService } from '../../services/logoService.js';
 
 async function setProgress(
   clipId: string,
@@ -34,9 +35,10 @@ export async function processClipJob(job: Job) {
     platform,
     sourcePath: jobSourcePath,
     burnCaptions = true,
+    addLogo = false,
   } = job.data;
   logger.info(
-    `Processing clip ${clipId} for video ${videoId} (captions: ${burnCaptions ? 'on' : 'off'})`,
+    `Processing clip ${clipId} (captions: ${burnCaptions ? 'on' : 'off'}, logo: ${addLogo ? 'on' : 'off'})`,
   );
 
   await setProgress(clipId, 5, 'Queued', 'processing');
@@ -57,7 +59,6 @@ export async function processClipJob(job: Job) {
       await setProgress(clipId, 15, 'Loading uploaded file');
       sourcePath = jobSourcePath;
       await fs.access(sourcePath);
-      logger.info(`Using uploaded source file: ${sourcePath}`);
     } else if (typeof videoId === 'string' && videoId.startsWith('file_')) {
       await setProgress(clipId, 15, 'Loading uploaded file');
       const extCandidates = ['.mp4', '.mov', '.webm', '.mkv'];
@@ -69,14 +70,11 @@ export async function processClipJob(job: Job) {
           found = base + ext;
           break;
         } catch {
-          /* try next */
+          /* next */
         }
       }
-      if (!found) {
-        throw new Error(`Uploaded file not found for ${videoId}`);
-      }
+      if (!found) throw new Error(`Uploaded file not found for ${videoId}`);
       sourcePath = found;
-      logger.info(`Using uploaded source file: ${sourcePath}`);
     } else {
       await setProgress(clipId, 10, 'Downloading from YouTube');
       sourcePath = await VideoDownloader.download(videoId, workDir);
@@ -90,8 +88,6 @@ export async function processClipJob(job: Job) {
       } else {
         srtPath = await CaptionService.transcribeWithWhisper(sourcePath, workDir);
       }
-    } else {
-      logger.info('Captions disabled for this clip — skipping burn-in');
     }
 
     await setProgress(clipId, 55, 'Cutting clip');
@@ -110,7 +106,7 @@ export async function processClipJob(job: Job) {
     );
 
     if (burnCaptions && srtPath) {
-      await setProgress(clipId, 85, 'Adding captions');
+      await setProgress(clipId, 82, 'Adding captions');
       const captioned = await CaptionService.burnCaptions({
         videoPath: transcodedPath,
         srtPath,
@@ -118,13 +114,25 @@ export async function processClipJob(job: Job) {
         duration,
         outputDir: './videos',
       });
-      if (captioned) {
-        transcodedPath = captioned;
-        logger.info('Captions burned into clip');
+      if (captioned) transcodedPath = captioned;
+    }
+
+    if (addLogo) {
+      await setProgress(clipId, 90, 'Adding brand logo');
+      const logoPath = await LogoService.findUserLogo(userId);
+      if (logoPath) {
+        const withLogo = await LogoService.applyLogo({
+          videoPath: transcodedPath,
+          logoPath,
+          outputDir: './videos',
+        });
+        if (withLogo) transcodedPath = withLogo;
+      } else {
+        logger.warn('addLogo requested but no logo file found for user');
       }
     }
 
-    await setProgress(clipId, 92, 'Thumbnail & export');
+    await setProgress(clipId, 95, 'Thumbnail & export');
     const thumbPath = await VideoProcessor.generateThumbnail(transcodedPath, 1);
 
     const finalVideoName = `${clipId}.mp4`;
