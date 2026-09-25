@@ -56,7 +56,6 @@ const logoStorage = multer.diskStorage({
       const userId = (req as any).user?.userId || 'anonymous';
       const dir = LogoService.logoDir(userId);
       await fs.mkdir(dir, { recursive: true });
-      // Clear old logos so only one is active
       try {
         const existing = await fs.readdir(dir);
         for (const f of existing) {
@@ -201,7 +200,35 @@ router.get(
   },
 );
 
-/** Upload / replace brand logo for watermark */
+/** Load playlist videos so user can pick one */
+router.post('/playlist', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { url } = req.body;
+    if (!url) throw new AppError('Playlist URL is required', 400);
+
+    const playlistId = YouTubeService.extractPlaylistId(url);
+    if (!playlistId) {
+      throw new AppError(
+        'Not a playlist link. Paste a URL that contains list=... (YouTube playlist)',
+        400,
+      );
+    }
+
+    logger.info(`Loading playlist: ${playlistId}`);
+    const videos = await YouTubeService.getPlaylistItems(playlistId);
+
+    res.json({
+      playlistId,
+      count: videos.length,
+      videos,
+    });
+  } catch (error: any) {
+    logger.error('Playlist error:', error.message);
+    if (error instanceof AppError) throw error;
+    throw new AppError(error.message || 'Failed to load playlist', 400);
+  }
+});
+
 router.post(
   '/logo',
   authMiddleware,
@@ -219,7 +246,7 @@ router.post(
       res.json({
         ok: true,
         path: logoPath,
-        message: 'Brand logo saved — enable “Add brand logo” when creating clips',
+        message: 'Brand logo saved',
       });
     } catch (error: any) {
       logger.error('Logo upload error:', error.message);
@@ -339,20 +366,22 @@ router.post(
 
 router.post('/analyze', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { url, goal, platforms } = req.body;
+    const { url, goal, platforms, videoId: bodyVideoId } = req.body;
     const userId = req.user?.userId;
 
-    if (!url) throw new AppError('URL is required', 400);
-
-    logger.info(`Analyzing video: ${url}`);
-
-    const videoId = YouTubeService.extractVideoId(url);
+    // Allow analyze by videoId alone (from playlist pick)
+    let videoId = bodyVideoId as string | undefined;
+    if (!videoId && url) {
+      videoId = YouTubeService.extractVideoId(url) || undefined;
+    }
     if (!videoId) {
       throw new AppError(
-        'Invalid YouTube URL. Use a single video link (watch?v=...), not a playlist. For non-YouTube files, use Upload video.',
+        'Invalid YouTube URL. Use a single video, or load a playlist and pick a video.',
         400,
       );
     }
+
+    logger.info(`Analyzing video: ${videoId}`);
 
     const metadata = await YouTubeService.getVideoMetadata(videoId);
 
@@ -385,12 +414,14 @@ router.post('/analyze', authMiddleware, async (req: Request, res: Response) => {
       sourceType: 'youtube' as const,
     };
 
+    const sourceUrl = url || `https://www.youtube.com/watch?v=${videoId}`;
+
     await prisma.videoAnalysis.upsert({
       where: { userId_videoId: { userId: userId!, videoId } },
       create: {
         userId: userId!,
         videoId,
-        sourceUrl: url,
+        sourceUrl,
         title: videoInfo.title || 'Untitled',
         description: videoInfo.description,
         duration: String(videoInfo.duration ?? ''),
@@ -399,7 +430,7 @@ router.post('/analyze', authMiddleware, async (req: Request, res: Response) => {
         suggestions: JSON.stringify(suggestions),
       },
       update: {
-        sourceUrl: url,
+        sourceUrl,
         title: videoInfo.title || 'Untitled',
         description: videoInfo.description,
         duration: String(videoInfo.duration ?? ''),

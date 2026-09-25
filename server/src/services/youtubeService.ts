@@ -15,6 +15,68 @@ export class YouTubeService {
     return match ? match[1] : null;
   }
 
+  static extractPlaylistId(url: string): string | null {
+    const match = url.match(/[?&]list=([a-zA-Z0-9_-]+)/);
+    return match ? match[1] : null;
+  }
+
+  /** Fetch up to 50 videos from a playlist */
+  static async getPlaylistItems(playlistId: string) {
+    try {
+      const items: Array<{
+        videoId: string;
+        title: string;
+        thumbnail?: string;
+        channelTitle?: string;
+        position: number;
+      }> = [];
+
+      let pageToken: string | undefined;
+      do {
+        const response = await axios.get(`${this.BASE_URL}/playlistItems`, {
+          params: {
+            playlistId,
+            key: this.API_KEY,
+            part: 'snippet,contentDetails',
+            maxResults: 50,
+            pageToken,
+          },
+        });
+
+        for (const item of response.data.items || []) {
+          const videoId =
+            item.contentDetails?.videoId || item.snippet?.resourceId?.videoId;
+          if (!videoId) continue;
+          // Skip deleted / private placeholders
+          if (item.snippet?.title === 'Private video' || item.snippet?.title === 'Deleted video') {
+            continue;
+          }
+          items.push({
+            videoId,
+            title: item.snippet?.title || 'Untitled',
+            thumbnail:
+              item.snippet?.thumbnails?.medium?.url ||
+              item.snippet?.thumbnails?.default?.url,
+            channelTitle: item.snippet?.videoOwnerChannelTitle || item.snippet?.channelTitle,
+            position: item.snippet?.position ?? items.length,
+          });
+        }
+
+        pageToken = response.data.nextPageToken;
+        // Cap at 50 for now so the UI stays fast
+        if (items.length >= 50) break;
+      } while (pageToken);
+
+      return items.slice(0, 50);
+    } catch (error: any) {
+      logger.error('Error fetching playlist:', error.message);
+      throw new Error(
+        error.response?.data?.error?.message ||
+          'Could not load playlist. Check the link and that YOUTUBE_API_KEY is set.',
+      );
+    }
+  }
+
   static async getVideoMetadata(videoId: string) {
     try {
       const response = await axios.get(`${this.BASE_URL}/videos`, {

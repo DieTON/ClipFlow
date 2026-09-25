@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Search, Play, Plus, Loader, Film, Check, Upload } from 'lucide-react';
+import { Search, Play, Plus, Loader, Film, Check, Upload, ListVideo } from 'lucide-react';
 import api from '../lib/api';
 import { useClipStore } from '../store/clipStore';
 import toast from 'react-hot-toast';
@@ -24,15 +24,26 @@ interface SavedAnalysis {
   updatedAt: string;
 }
 
+interface PlaylistVideo {
+  videoId: string;
+  title: string;
+  thumbnail?: string;
+  channelTitle?: string;
+  position: number;
+}
+
 export function GeneratorPage() {
   const [url, setUrl] = useState('');
+  const [playlistUrl, setPlaylistUrl] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
+  const [loadingPlaylist, setLoadingPlaylist] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [loadingSaved, setLoadingSaved] = useState(true);
   const [suggestions, setSuggestions] = useState<SuggestedClip[]>([]);
   const [videoInfo, setVideoInfo] = useState<any>(null);
   const [savedList, setSavedList] = useState<SavedAnalysis[]>([]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [playlistVideos, setPlaylistVideos] = useState<PlaylistVideo[]>([]);
   const [burnCaptions, setBurnCaptions] = useState(true);
   const [addLogo, setAddLogo] = useState(false);
   const [hasLogo, setHasLogo] = useState(false);
@@ -44,7 +55,7 @@ export function GeneratorPage() {
       const res = await api.get('/api/videos/analyses');
       setSavedList(res.data.analyses || []);
     } catch (e) {
-      console.error('Failed to load saved analyses', e);
+      console.error(e);
     } finally {
       setLoadingSaved(false);
     }
@@ -89,15 +100,9 @@ export function GeneratorPage() {
       const res = await api.get(`/api/videos/analyses/${videoId}`);
       setVideoInfo(res.data.videoInfo);
       setSuggestions(res.data.suggestions || []);
-      if (!String(videoId).startsWith('file_')) {
-        setUrl(
-          res.data.analysis?.sourceUrl ||
-            `https://www.youtube.com/watch?v=${videoId}`,
-        );
-      }
       toast.success('Loaded saved suggestions');
       window.scrollTo({ top: 0, behavior: 'smooth' });
-    } catch (e) {
+    } catch {
       toast.error('Could not load that video');
     }
   };
@@ -106,17 +111,62 @@ export function GeneratorPage() {
     e.preventDefault();
     if (!url) return;
     setAnalyzing(true);
+    setPlaylistVideos([]);
     try {
       const response = await api.post('/api/videos/analyze', { url });
       setVideoInfo(response.data.videoInfo);
       setSuggestions(response.data.suggestions);
-      toast.success('YouTube video analyzed and saved!');
+      toast.success('Video analyzed!');
       await loadSavedList();
     } catch (error: any) {
       toast.error(
         error?.response?.data?.error ||
           error?.response?.data?.message ||
           'Failed to analyze video',
+      );
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const handleLoadPlaylist = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!playlistUrl) return;
+    setLoadingPlaylist(true);
+    setSuggestions([]);
+    setVideoInfo(null);
+    try {
+      const res = await api.post('/api/videos/playlist', { url: playlistUrl });
+      setPlaylistVideos(res.data.videos || []);
+      toast.success(`Loaded ${res.data.count} videos — pick one to clip`);
+    } catch (error: any) {
+      toast.error(
+        error?.response?.data?.error ||
+          error?.response?.data?.message ||
+          'Failed to load playlist',
+      );
+      setPlaylistVideos([]);
+    } finally {
+      setLoadingPlaylist(false);
+    }
+  };
+
+  const handlePickPlaylistVideo = async (v: PlaylistVideo) => {
+    setAnalyzing(true);
+    try {
+      const response = await api.post('/api/videos/analyze', {
+        videoId: v.videoId,
+        url: `https://www.youtube.com/watch?v=${v.videoId}`,
+      });
+      setVideoInfo(response.data.videoInfo);
+      setSuggestions(response.data.suggestions);
+      setUrl(`https://www.youtube.com/watch?v=${v.videoId}`);
+      toast.success(`Analyzing: ${v.title.slice(0, 40)}…`);
+      await loadSavedList();
+      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    } catch (error: any) {
+      toast.error(
+        error?.response?.data?.error || 'Failed to analyze that video',
       );
     } finally {
       setAnalyzing(false);
@@ -140,14 +190,12 @@ export function GeneratorPage() {
       });
       setVideoInfo(response.data.videoInfo);
       setSuggestions(response.data.suggestions);
-      setUrl('');
+      setPlaylistVideos([]);
       toast.success('Uploaded video analyzed!');
       await loadSavedList();
     } catch (error: any) {
       toast.error(
-        error?.response?.data?.error ||
-          error?.response?.data?.message ||
-          'Failed to upload / analyze file',
+        error?.response?.data?.error || 'Failed to upload / analyze file',
       );
     } finally {
       setUploading(false);
@@ -157,11 +205,11 @@ export function GeneratorPage() {
   const handleCreateClip = async (suggestion: SuggestedClip) => {
     if (!videoInfo?.videoId) return;
     if (suggestion.alreadyCreated) {
-      toast('This suggestion was already created');
+      toast('Already created');
       return;
     }
     if (addLogo && !hasLogo) {
-      toast.error('Upload a brand logo first, or turn off Add brand logo');
+      toast.error('Upload a logo first, or turn off Add brand logo');
       return;
     }
     try {
@@ -183,8 +231,8 @@ export function GeneratorPage() {
             : s,
         ),
       );
-      toast.success('Clip created — watch progress on Dashboard');
-    } catch (error) {
+      toast.success('Clip created — check Dashboard progress');
+    } catch {
       toast.error('Failed to create clip');
     }
   };
@@ -194,32 +242,79 @@ export function GeneratorPage() {
       <div>
         <h1 className="text-3xl font-bold text-slate-900">Clip Generator</h1>
         <p className="text-slate-600 mt-2">
-          YouTube link or file upload. Optional captions and brand logo.
+          Single video, playlist (pick one), or file upload.
         </p>
       </div>
 
       <form onSubmit={handleAnalyze} className="card space-y-3">
         <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-          <Search size={20} /> From YouTube link
+          <Search size={20} /> Single YouTube video
         </h2>
         <div className="flex gap-2">
           <input
             type="text"
-            placeholder="Paste YouTube URL here..."
+            placeholder="https://youtube.com/watch?v=..."
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             className="input flex-1"
           />
           <button type="submit" disabled={analyzing} className="btn-primary flex items-center gap-2 disabled:opacity-50">
             {analyzing ? <Loader size={20} className="animate-spin" /> : <Search size={20} />}
-            {analyzing ? 'Analyzing...' : 'Analyze'}
+            Analyze
           </button>
         </div>
       </form>
 
+      <form onSubmit={handleLoadPlaylist} className="card space-y-3 border border-blue-100 bg-blue-50/30">
+        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+          <ListVideo size={20} /> YouTube playlist
+        </h2>
+        <p className="text-sm text-slate-600">
+          Paste a playlist link (must include <code className="text-xs bg-white px-1 rounded">list=</code>). Then click a video to analyze it.
+        </p>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            placeholder="https://youtube.com/playlist?list=..."
+            value={playlistUrl}
+            onChange={(e) => setPlaylistUrl(e.target.value)}
+            className="input flex-1"
+          />
+          <button type="submit" disabled={loadingPlaylist} className="btn-primary flex items-center gap-2 disabled:opacity-50">
+            {loadingPlaylist ? <Loader size={20} className="animate-spin" /> : <ListVideo size={20} />}
+            Load
+          </button>
+        </div>
+
+        {playlistVideos.length > 0 && (
+          <div className="mt-3 max-h-80 overflow-y-auto space-y-2 border border-slate-200 rounded-lg p-2 bg-white">
+            <p className="text-xs text-slate-500 px-1">{playlistVideos.length} videos — click one:</p>
+            {playlistVideos.map((v) => (
+              <button
+                key={v.videoId}
+                type="button"
+                disabled={analyzing}
+                onClick={() => handlePickPlaylistVideo(v)}
+                className="w-full flex gap-3 p-2 rounded-lg hover:bg-blue-50 text-left disabled:opacity-50"
+              >
+                {v.thumbnail ? (
+                  <img src={v.thumbnail} alt="" className="w-24 h-14 object-cover rounded flex-shrink-0" />
+                ) : (
+                  <div className="w-24 h-14 bg-slate-200 rounded flex-shrink-0" />
+                )}
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-slate-900 line-clamp-2">{v.title}</p>
+                  <p className="text-xs text-slate-500">{v.channelTitle || 'YouTube'}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </form>
+
       <form onSubmit={handleUploadAnalyze} className="card space-y-3 border-2 border-dashed border-slate-200">
         <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-          <Upload size={20} /> From video file
+          <Upload size={20} /> Video file
         </h2>
         <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
           <input
@@ -230,24 +325,21 @@ export function GeneratorPage() {
           />
           <button type="submit" disabled={uploading || !selectedFile} className="btn-primary flex items-center justify-center gap-2 disabled:opacity-50 whitespace-nowrap">
             {uploading ? <Loader size={20} className="animate-spin" /> : <Upload size={20} />}
-            {uploading ? 'Uploading...' : 'Upload & analyze'}
+            Upload & analyze
           </button>
         </div>
       </form>
 
       <div className="card space-y-3">
-        <h2 className="text-lg font-bold text-slate-900">Brand logo (watermark)</h2>
-        <p className="text-sm text-slate-600">
-          Upload the PNG/JPG the campaign gave you. Then tick “Add brand logo” when creating clips.
-        </p>
+        <h2 className="text-lg font-bold text-slate-900">Brand logo</h2>
         <div className="flex flex-wrap items-center gap-3">
-          <label className="btn-primary cursor-pointer inline-flex items-center gap-2 opacity-90">
+          <label className="btn-primary cursor-pointer inline-flex items-center gap-2">
             {logoUploading ? <Loader size={18} className="animate-spin" /> : <Upload size={18} />}
-            {logoUploading ? 'Uploading…' : 'Upload logo'}
+            Upload logo
             <input type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" className="hidden" onChange={handleLogoUpload} />
           </label>
-          <span className={`text-sm font-medium ${hasLogo ? 'text-green-700' : 'text-slate-500'}`}>
-            {hasLogo ? 'Logo saved on this PC' : 'No logo uploaded yet'}
+          <span className={`text-sm ${hasLogo ? 'text-green-700' : 'text-slate-500'}`}>
+            {hasLogo ? 'Logo saved' : 'No logo yet'}
           </span>
         </div>
       </div>
@@ -257,23 +349,19 @@ export function GeneratorPage() {
           <Film size={20} /> Saved videos
         </h2>
         {loadingSaved ? (
-          <p className="text-slate-600 text-sm">Loading...</p>
+          <p className="text-sm text-slate-600">Loading...</p>
         ) : savedList.length === 0 ? (
-          <p className="text-slate-600 text-sm">No saved analyses yet.</p>
+          <p className="text-sm text-slate-600">None yet</p>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {savedList.map((item) => (
-              <button key={item.id} type="button" onClick={() => openSaved(item.videoId)} className="flex gap-3 p-3 rounded-lg border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-left">
+              <button key={item.id} type="button" onClick={() => openSaved(item.videoId)} className="flex gap-3 p-3 rounded-lg border hover:bg-blue-50 text-left">
                 {item.thumbnail ? (
-                  <img src={item.thumbnail} alt="" className="w-20 h-14 object-cover rounded flex-shrink-0" />
+                  <img src={item.thumbnail} alt="" className="w-20 h-14 object-cover rounded" />
                 ) : (
-                  <div className="w-20 h-14 bg-slate-200 rounded flex-shrink-0 flex items-center justify-center text-xs text-slate-500">
-                    {String(item.videoId).startsWith('file_') ? 'FILE' : 'YT'}
-                  </div>
+                  <div className="w-20 h-14 bg-slate-200 rounded text-xs flex items-center justify-center">YT</div>
                 )}
-                <div className="min-w-0">
-                  <p className="font-medium text-slate-900 text-sm line-clamp-2">{item.title}</p>
-                </div>
+                <p className="text-sm font-medium line-clamp-2">{item.title}</p>
               </button>
             ))}
           </div>
@@ -282,56 +370,43 @@ export function GeneratorPage() {
 
       {videoInfo && (
         <div className="card">
-          <h2 className="text-2xl font-bold text-slate-900">{videoInfo.title}</h2>
-          <p className="text-sm text-slate-500 mt-2">Duration: {videoInfo.duration}</p>
+          <h2 className="text-xl font-bold">{videoInfo.title}</h2>
+          <p className="text-sm text-slate-500 mt-1">Duration: {videoInfo.duration}</p>
         </div>
       )}
 
       {suggestions.length > 0 && (
         <div className="space-y-4">
-          <div className="flex flex-col gap-3">
-            <h2 className="text-2xl font-bold text-slate-900">Suggestions</h2>
-            <div className="flex flex-wrap gap-3">
-              <label className="flex items-center gap-2 cursor-pointer bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
-                <input type="checkbox" checked={burnCaptions} onChange={(e) => setBurnCaptions(e.target.checked)} className="w-4 h-4" />
-                <span className="text-sm font-medium">Add captions</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
-                <input type="checkbox" checked={addLogo} onChange={(e) => setAddLogo(e.target.checked)} className="w-4 h-4" />
-                <span className="text-sm font-medium">Add brand logo</span>
-              </label>
-            </div>
+          <div className="flex flex-wrap gap-3">
+            <h2 className="text-2xl font-bold w-full">Suggestions</h2>
+            <label className="flex items-center gap-2 bg-slate-50 border rounded-lg px-4 py-2 cursor-pointer">
+              <input type="checkbox" checked={burnCaptions} onChange={(e) => setBurnCaptions(e.target.checked)} />
+              <span className="text-sm font-medium">Captions</span>
+            </label>
+            <label className="flex items-center gap-2 bg-slate-50 border rounded-lg px-4 py-2 cursor-pointer">
+              <input type="checkbox" checked={addLogo} onChange={(e) => setAddLogo(e.target.checked)} />
+              <span className="text-sm font-medium">Brand logo</span>
+            </label>
           </div>
-
-          <div className="grid gap-4">
-            {suggestions.map((suggestion, idx) => (
-              <div key={idx} className="card">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Play size={18} className="text-blue-600" />
-                      <span className="text-sm font-medium text-slate-600">
-                        {suggestion.startSeconds}s – {suggestion.startSeconds + suggestion.duration}s
-                      </span>
-                      {suggestion.label && (
-                        <span className="text-xs bg-slate-100 px-2 py-0.5 rounded">{suggestion.label}</span>
-                      )}
-                    </div>
-                    <p className="text-slate-900 font-medium">{suggestion.reason}</p>
-                  </div>
-                  {suggestion.alreadyCreated ? (
-                    <span className="flex items-center gap-1 text-sm text-green-700 bg-green-50 px-3 py-2 rounded-lg">
-                      <Check size={16} /> Created
-                    </span>
-                  ) : (
-                    <button onClick={() => handleCreateClip(suggestion)} className="btn-primary flex items-center gap-2">
-                      <Plus size={20} /> Create
-                    </button>
-                  )}
+          {suggestions.map((s, idx) => (
+            <div key={idx} className="card flex items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 text-sm text-slate-600">
+                  <Play size={16} className="text-blue-600" />
+                  {s.startSeconds}s – {s.startSeconds + s.duration}s
+                  {s.label && <span className="bg-slate-100 px-2 rounded text-xs">{s.label}</span>}
                 </div>
+                <p className="font-medium mt-1">{s.reason}</p>
               </div>
-            ))}
-          </div>
+              {s.alreadyCreated ? (
+                <span className="text-green-700 text-sm flex items-center gap-1"><Check size={16} /> Created</span>
+              ) : (
+                <button onClick={() => handleCreateClip(s)} className="btn-primary flex items-center gap-2">
+                  <Plus size={18} /> Create
+                </button>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </div>
