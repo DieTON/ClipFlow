@@ -7,6 +7,9 @@ import ffmpeg from 'fluent-ffmpeg';
 import { YouTubeService } from '../services/youtubeService.js';
 import { VideoProcessor } from '../services/videoProcessor.js';
 import { LogoService } from '../services/logoService.js';
+import { fetchYoutubeTranscript } from '../services/suggestionService.js';
+import { CaptionService } from '../services/captionService.js';
+import { parseSrtContent } from '../services/suggestionService.js';
 import { logger } from '../utils/logger.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { authMiddleware } from '../middleware/auth.js';
@@ -200,7 +203,6 @@ router.get(
   },
 );
 
-/** Load playlist videos so user can pick one */
 router.post('/playlist', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { url } = req.body;
@@ -296,11 +298,21 @@ router.post(
         channelTitle: 'Local upload',
       };
 
+      // Optional Whisper transcript for smarter cuts (if installed)
+      let transcriptCues: Array<{ start: number; end: number; text: string }> | undefined;
+      const workDir = path.join('./videos', 'tx', userId || 'anon');
+      const srtPath = await CaptionService.transcribeWithWhisper(filePath, workDir);
+      if (srtPath) {
+        const raw = await fs.readFile(srtPath, 'utf8');
+        transcriptCues = parseSrtContent(raw);
+      }
+
       const clips = await VideoProcessor.generateClips({
         videoId,
         metadata,
         goal: (req.body?.goal as string) || 'Viral highlights',
         platforms: ['youtube'],
+        transcriptCues,
       });
 
       const suggestions = clips.map((c) => ({
@@ -356,6 +368,7 @@ router.post(
         totalClips: clips.length,
         saved: true,
         sourceType: 'upload',
+        smartSuggestions: !!transcriptCues?.length,
       });
     } catch (error: any) {
       logger.error('Upload analysis error:', error.message);
@@ -369,7 +382,6 @@ router.post('/analyze', authMiddleware, async (req: Request, res: Response) => {
     const { url, goal, platforms, videoId: bodyVideoId } = req.body;
     const userId = req.user?.userId;
 
-    // Allow analyze by videoId alone (from playlist pick)
     let videoId = bodyVideoId as string | undefined;
     if (!videoId && url) {
       videoId = YouTubeService.extractVideoId(url) || undefined;
@@ -385,11 +397,16 @@ router.post('/analyze', authMiddleware, async (req: Request, res: Response) => {
 
     const metadata = await YouTubeService.getVideoMetadata(videoId);
 
+    // Fetch auto-captions for smarter suggestions (no full video download)
+    const workDir = path.join('./videos', 'tx', userId || 'anon');
+    const transcriptCues = await fetchYoutubeTranscript(videoId, workDir);
+
     const clips = await VideoProcessor.generateClips({
       videoId,
       metadata,
       goal: goal || 'Viral highlights',
       platforms: platforms || ['youtube'],
+      transcriptCues: transcriptCues || undefined,
     });
 
     const suggestions = clips.map((c) => ({
@@ -467,6 +484,7 @@ router.post('/analyze', authMiddleware, async (req: Request, res: Response) => {
       totalClips: clips.length,
       saved: true,
       sourceType: 'youtube',
+      smartSuggestions: !!transcriptCues?.length,
     });
   } catch (error: any) {
     logger.error('Analysis error:', error.message);
