@@ -55,6 +55,11 @@ model Clip {
   thumbnailUrl String?
   status       String  @default("draft")
 
+  /// 0–100 while processing
+  progressPercent Int     @default(0)
+  /// e.g. Downloading, Cutting, Captions, Ready
+  progressLabel   String?
+
   schedules Schedule[]
 
   createdAt DateTime @default(now())
@@ -81,7 +86,6 @@ model Schedule {
   updatedAt DateTime @updatedAt
 }
 
-/// Saved analyze results so user can return and create more clips later
 model VideoAnalysis {
   id     String @id @default(cuid())
   userId String
@@ -94,7 +98,6 @@ model VideoAnalysis {
   duration     String?
   thumbnail    String?
   channelTitle String?
-  /// JSON array of suggestion objects
   suggestions  String
 
   createdAt DateTime @default(now())

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-interface Clip {
+export interface Clip {
   id: string;
   videoId: string;
   title: string;
@@ -9,6 +9,10 @@ interface Clip {
   duration: number;
   platform: string;
   status: string;
+  progressPercent?: number;
+  progressLabel?: string | null;
+  videoUrl?: string;
+  thumbnailUrl?: string;
   createdAt: string;
 }
 

@@ -7,6 +7,23 @@ import { VideoDownloader } from '../../services/videoDownloader.js';
 import { VideoProcessor } from '../../services/videoProcessor.js';
 import { CaptionService } from '../../services/captionService.js';
 
+async function setProgress(
+  clipId: string,
+  percent: number,
+  label: string,
+  status?: string,
+) {
+  await prisma.clip.update({
+    where: { id: clipId },
+    data: {
+      progressPercent: Math.min(100, Math.max(0, Math.round(percent))),
+      progressLabel: label,
+      ...(status ? { status } : {}),
+    },
+  });
+  logger.info(`Clip ${clipId}: ${percent}% — ${label}`);
+}
+
 export async function processClipJob(job: Job) {
   const {
     clipId,
@@ -22,10 +39,7 @@ export async function processClipJob(job: Job) {
     `Processing clip ${clipId} for video ${videoId} (captions: ${burnCaptions ? 'on' : 'off'})`,
   );
 
-  await prisma.clip.update({
-    where: { id: clipId },
-    data: { status: 'processing' },
-  });
+  await setProgress(clipId, 5, 'Queued', 'processing');
 
   const workDir = path.join('./videos', userId, clipId);
   const readyDir = path.join('./videos', 'ready');
@@ -40,10 +54,12 @@ export async function processClipJob(job: Job) {
       (typeof videoId === 'string' && videoId.startsWith('file_'));
 
     if (jobSourcePath) {
+      await setProgress(clipId, 15, 'Loading uploaded file');
       sourcePath = jobSourcePath;
       await fs.access(sourcePath);
       logger.info(`Using uploaded source file: ${sourcePath}`);
     } else if (typeof videoId === 'string' && videoId.startsWith('file_')) {
+      await setProgress(clipId, 15, 'Loading uploaded file');
       const extCandidates = ['.mp4', '.mov', '.webm', '.mkv'];
       const base = path.join('./videos/uploads', userId, videoId);
       let found: string | null = null;
@@ -62,10 +78,13 @@ export async function processClipJob(job: Job) {
       sourcePath = found;
       logger.info(`Using uploaded source file: ${sourcePath}`);
     } else {
+      await setProgress(clipId, 10, 'Downloading from YouTube');
       sourcePath = await VideoDownloader.download(videoId, workDir);
+      await setProgress(clipId, 40, 'Download complete');
     }
 
     if (burnCaptions) {
+      await setProgress(clipId, isLocalFile ? 25 : 45, 'Fetching captions');
       if (!isLocalFile) {
         srtPath = await CaptionService.downloadYoutubeSubs(videoId, workDir);
       } else {
@@ -75,6 +94,7 @@ export async function processClipJob(job: Job) {
       logger.info('Captions disabled for this clip — skipping burn-in');
     }
 
+    await setProgress(clipId, 55, 'Cutting clip');
     const clipPath = await VideoProcessor.extractClip({
       videoId,
       inputPath: sourcePath,
@@ -83,12 +103,14 @@ export async function processClipJob(job: Job) {
       platform,
     });
 
+    await setProgress(clipId, 70, 'Making vertical (9:16)');
     let transcodedPath = await VideoProcessor.transcodeForPlatform(
       clipPath,
       platform,
     );
 
     if (burnCaptions && srtPath) {
+      await setProgress(clipId, 85, 'Adding captions');
       const captioned = await CaptionService.burnCaptions({
         videoPath: transcodedPath,
         srtPath,
@@ -102,6 +124,7 @@ export async function processClipJob(job: Job) {
       }
     }
 
+    await setProgress(clipId, 92, 'Thumbnail & export');
     const thumbPath = await VideoProcessor.generateThumbnail(transcodedPath, 1);
 
     const finalVideoName = `${clipId}.mp4`;
@@ -128,6 +151,8 @@ export async function processClipJob(job: Job) {
         status: 'ready',
         videoUrl,
         thumbnailUrl,
+        progressPercent: 100,
+        progressLabel: 'Ready',
       },
     });
 
@@ -139,7 +164,11 @@ export async function processClipJob(job: Job) {
     logger.error(`Clip processing failed for ${clipId}: ${error.message}`);
     await prisma.clip.update({
       where: { id: clipId },
-      data: { status: 'failed' },
+      data: {
+        status: 'failed',
+        progressPercent: 0,
+        progressLabel: `Failed: ${error.message?.slice(0, 80) || 'error'}`,
+      },
     });
     throw error;
   }

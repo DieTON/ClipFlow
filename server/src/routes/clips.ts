@@ -68,7 +68,9 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
         startSeconds: startSeconds ?? 0,
         duration: duration ?? 30,
         platform: platform || 'youtube',
-        status: 'draft',
+        status: process ? 'processing' : 'draft',
+        progressPercent: process ? 2 : 0,
+        progressLabel: process ? 'Queued' : null,
       },
     });
 
@@ -98,12 +100,6 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
         sourcePath: resolvedSource,
         burnCaptions: burnCaptions !== false && burnCaptions !== 'false',
       });
-
-      await prisma.clip.update({
-        where: { id: clip.id },
-        data: { status: 'processing' },
-      });
-      clip.status = 'processing';
     }
 
     res.status(201).json(clip);
@@ -143,6 +139,15 @@ router.post(
         }
       }
 
+      await prisma.clip.update({
+        where: { id: clip.id },
+        data: {
+          status: 'processing',
+          progressPercent: 2,
+          progressLabel: 'Queued',
+        },
+      });
+
       await enqueueClipProcessing({
         clipId: clip.id,
         userId: userId!,
@@ -152,11 +157,6 @@ router.post(
         platform: clip.platform,
         sourcePath,
         burnCaptions,
-      });
-
-      await prisma.clip.update({
-        where: { id: clip.id },
-        data: { status: 'processing' },
       });
 
       res.json({ message: 'Processing enqueued', clipId: clip.id });
