@@ -3,11 +3,16 @@ import { logger } from '../utils/logger.js';
 import path from 'path';
 import { promises as fs } from 'fs';
 import { v4 as uuid } from 'uuid';
+import { suggestionsFromTranscript } from './suggestionService.js';
 
 function parseDurationSeconds(isoDuration: string | undefined): number {
   if (!isoDuration) return 600;
-  const match = isoDuration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
-  if (!match) return 600;
+  if (typeof isoDuration === 'number') return isoDuration;
+  const match = String(isoDuration).match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+  if (!match) {
+    const n = parseFloat(String(isoDuration));
+    return Number.isFinite(n) && n > 0 ? n : 600;
+  }
   const h = parseInt(match[1] || '0', 10);
   const m = parseInt(match[2] || '0', 10);
   const s = parseInt(match[3] || '0', 10);
@@ -30,6 +35,8 @@ export class VideoProcessor {
     metadata: any;
     goal: string;
     platforms: string[];
+    /** Optional transcript cues for smarter suggestions */
+    transcriptCues?: Array<{ start: number; end: number; text: string }>;
   }) {
     logger.info('Generating clips for video:', options.videoId);
 
@@ -37,39 +44,153 @@ export class VideoProcessor {
     const platforms =
       options.platforms?.length > 0 ? options.platforms : ['youtube'];
 
-    type Template = { name: string; startRatio: number; duration: number; reason: string };
+    // Prefer transcript-based suggestions when available
+    if (options.transcriptCues?.length) {
+      const smart = suggestionsFromTranscript(
+        options.transcriptCues,
+        totalSeconds,
+        platforms,
+        options.goal || 'Viral highlights',
+      );
+      if (smart) {
+        logger.info(`Using ${smart.length} transcript-based suggestions`);
+        return smart;
+      }
+    }
+
+    type Template = {
+      name: string;
+      startRatio: number;
+      duration: number;
+      reason: string;
+    };
 
     const GOAL_TEMPLATES: Record<string, Template[]> = {
       'Viral highlights': [
-        { name: 'Opening hook', startRatio: 0.02, duration: 30, reason: 'Strong opening moment to stop the scroll' },
-        { name: 'Peak energy', startRatio: 0.35, duration: 40, reason: 'High-energy midpoint highlight' },
-        { name: 'Surprising twist', startRatio: 0.55, duration: 35, reason: 'Unexpected turn that drives shares' },
-        { name: 'Climax moment', startRatio: 0.75, duration: 30, reason: 'Payoff moment near the end' },
+        {
+          name: 'Opening hook',
+          startRatio: 0.02,
+          duration: 30,
+          reason: 'Strong opening moment to stop the scroll',
+        },
+        {
+          name: 'Peak energy',
+          startRatio: 0.35,
+          duration: 40,
+          reason: 'High-energy midpoint highlight',
+        },
+        {
+          name: 'Surprising twist',
+          startRatio: 0.55,
+          duration: 35,
+          reason: 'Unexpected turn that drives shares',
+        },
+        {
+          name: 'Climax moment',
+          startRatio: 0.75,
+          duration: 30,
+          reason: 'Payoff moment near the end',
+        },
       ],
       'Motivational moments': [
-        { name: 'Turning point', startRatio: 0.15, duration: 45, reason: 'Emotional low-to-high shift' },
-        { name: 'Breakthrough', startRatio: 0.45, duration: 50, reason: 'Key insight or breakthrough' },
-        { name: 'Wisdom drop', startRatio: 0.7, duration: 40, reason: 'Memorable takeaway quote' },
+        {
+          name: 'Turning point',
+          startRatio: 0.15,
+          duration: 45,
+          reason: 'Emotional low-to-high shift',
+        },
+        {
+          name: 'Breakthrough',
+          startRatio: 0.45,
+          duration: 50,
+          reason: 'Key insight or breakthrough',
+        },
+        {
+          name: 'Wisdom drop',
+          startRatio: 0.7,
+          duration: 40,
+          reason: 'Memorable takeaway quote',
+        },
       ],
       'Funny/reactions': [
-        { name: 'Unexpected moment', startRatio: 0.1, duration: 25, reason: 'Comedy beat early on' },
-        { name: 'Reaction peak', startRatio: 0.4, duration: 30, reason: 'Strong reaction shot' },
-        { name: 'Absurd scenario', startRatio: 0.65, duration: 35, reason: 'Most shareable funny segment' },
+        {
+          name: 'Unexpected moment',
+          startRatio: 0.1,
+          duration: 25,
+          reason: 'Comedy beat early on',
+        },
+        {
+          name: 'Reaction peak',
+          startRatio: 0.4,
+          duration: 30,
+          reason: 'Strong reaction shot',
+        },
+        {
+          name: 'Absurd scenario',
+          startRatio: 0.65,
+          duration: 35,
+          reason: 'Most shareable funny segment',
+        },
       ],
       'Educational snippets': [
-        { name: 'Key insight', startRatio: 0.08, duration: 45, reason: 'Core concept explained clearly' },
-        { name: 'Step-by-step', startRatio: 0.4, duration: 55, reason: 'Actionable how-to segment' },
-        { name: 'Pro tip', startRatio: 0.72, duration: 35, reason: 'Advanced tip worth saving' },
+        {
+          name: 'Key insight',
+          startRatio: 0.08,
+          duration: 45,
+          reason: 'Core concept explained clearly',
+        },
+        {
+          name: 'Step-by-step',
+          startRatio: 0.4,
+          duration: 55,
+          reason: 'Actionable how-to segment',
+        },
+        {
+          name: 'Pro tip',
+          startRatio: 0.72,
+          duration: 35,
+          reason: 'Advanced tip worth saving',
+        },
       ],
       'Story-driven': [
-        { name: 'Scene setter', startRatio: 0.0, duration: 35, reason: 'Context that pulls viewers in' },
-        { name: 'Rising tension', startRatio: 0.4, duration: 45, reason: 'Builds curiosity' },
-        { name: 'Emotional climax', startRatio: 0.75, duration: 40, reason: 'Emotional payoff' },
+        {
+          name: 'Scene setter',
+          startRatio: 0.0,
+          duration: 35,
+          reason: 'Context that pulls viewers in',
+        },
+        {
+          name: 'Rising tension',
+          startRatio: 0.4,
+          duration: 45,
+          reason: 'Builds curiosity',
+        },
+        {
+          name: 'Emotional climax',
+          startRatio: 0.75,
+          duration: 40,
+          reason: 'Emotional payoff',
+        },
       ],
       'Product showcase': [
-        { name: 'Problem setup', startRatio: 0.05, duration: 30, reason: 'Pain point viewers relate to' },
-        { name: 'Product reveal', startRatio: 0.35, duration: 40, reason: 'Clear product demonstration' },
-        { name: 'Before/after', startRatio: 0.65, duration: 45, reason: 'Transformation proof' },
+        {
+          name: 'Problem setup',
+          startRatio: 0.05,
+          duration: 30,
+          reason: 'Pain point viewers relate to',
+        },
+        {
+          name: 'Product reveal',
+          startRatio: 0.35,
+          duration: 40,
+          reason: 'Clear product demonstration',
+        },
+        {
+          name: 'Before/after',
+          startRatio: 0.65,
+          duration: 45,
+          reason: 'Transformation proof',
+        },
       ],
     };
 
@@ -78,6 +199,8 @@ export class VideoProcessor {
 
     const minClip = 15;
     const maxClip = 60;
+
+    logger.info('Using template-based suggestions (no usable transcript)');
 
     return templates
       .map((template, i) => {
