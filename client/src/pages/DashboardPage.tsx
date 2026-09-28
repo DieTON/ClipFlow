@@ -1,5 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { BarChart3, Film, Calendar, TrendingUp } from 'lucide-react';
+import {
+  BarChart3,
+  Film,
+  Calendar,
+  TrendingUp,
+  Play,
+  X,
+  ExternalLink,
+  Download,
+} from 'lucide-react';
 import { useClipStore, Clip } from '../store/clipStore';
 import api from '../lib/api';
 
@@ -33,7 +42,7 @@ function ProgressBar({ clip }: { clip: Clip }) {
   if (clip.status === 'failed') {
     return (
       <div className="mt-2 w-full max-w-xs">
-        <p className="text-xs text-red-600 mb-1">{label}</p>
+        <p className="text-xs text-red-600 mb-1 line-clamp-2">{label}</p>
         <div className="h-2 bg-red-100 rounded-full overflow-hidden">
           <div className="h-full bg-red-400 w-full" />
         </div>
@@ -68,6 +77,96 @@ function ProgressBar({ clip }: { clip: Clip }) {
   );
 }
 
+function PreviewModal({
+  clip,
+  onClose,
+}: {
+  clip: Clip;
+  onClose: () => void;
+}) {
+  const src = clip.videoUrl;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+          <div className="min-w-0">
+            <p className="font-semibold text-slate-900 truncate text-sm">
+              {clip.title}
+            </p>
+            <p className="text-xs text-slate-500">
+              {clip.duration}s · {clip.status}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 rounded-lg hover:bg-slate-100 text-slate-600"
+            aria-label="Close"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="bg-black flex items-center justify-center aspect-[9/16] max-h-[70vh]">
+          {src ? (
+            <video
+              key={src}
+              src={src}
+              controls
+              autoPlay
+              playsInline
+              className="max-h-[70vh] w-full object-contain"
+            />
+          ) : (
+            <p className="text-white text-sm p-6 text-center">
+              No video file URL yet. Check Videos\\ClipFlow on your PC.
+            </p>
+          )}
+        </div>
+
+        <div className="flex flex-wrap gap-2 p-4 border-t border-slate-100">
+          {src && (
+            <>
+              <a
+                href={src}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-800 px-3 py-2 rounded-lg hover:bg-blue-50"
+              >
+                <ExternalLink size={16} />
+                Open in new tab
+              </a>
+              <a
+                href={src}
+                download
+                className="inline-flex items-center gap-2 text-sm font-medium text-slate-700 hover:text-slate-900 px-3 py-2 rounded-lg hover:bg-slate-50"
+              >
+                <Download size={16} />
+                Download
+              </a>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function DashboardPage() {
   const [stats, setStats] = useState<Stats>({
     totalClips: 0,
@@ -76,6 +175,7 @@ export function DashboardPage() {
     scheduledClips: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [previewClip, setPreviewClip] = useState<Clip | null>(null);
   const { clips, setClips } = useClipStore();
 
   useEffect(() => {
@@ -106,7 +206,6 @@ export function DashboardPage() {
 
     fetchData();
 
-    // Live poll while any clip is processing
     const interval = setInterval(async () => {
       try {
         const clipsRes = await api.get('/api/clips');
@@ -114,7 +213,7 @@ export function DashboardPage() {
         const list = clipsRes.data.clips || [];
         setClips(Array.isArray(list) ? list : []);
       } catch {
-        /* ignore poll errors */
+        /* ignore */
       }
     }, 2500);
 
@@ -128,19 +227,16 @@ export function DashboardPage() {
     icon: Icon,
     label,
     value,
-    trend,
   }: {
     icon: any;
     label: string;
     value: string | number;
-    trend?: string;
   }) => (
     <div className="card">
       <div className="flex items-center justify-between">
         <div>
           <p className="text-slate-600 text-sm font-medium">{label}</p>
           <p className="text-3xl font-bold text-slate-900 mt-2">{value}</p>
-          {trend && <p className="text-green-600 text-sm mt-2">{trend}</p>}
         </div>
         <div className="p-3 bg-blue-100 rounded-lg">
           <Icon className="text-blue-600" size={24} />
@@ -149,12 +245,16 @@ export function DashboardPage() {
     </div>
   );
 
+  const canPreview = (clip: Clip) =>
+    !!clip.videoUrl &&
+    (clip.status === 'ready' || clip.status === 'published');
+
   return (
     <div className="space-y-8">
       <div>
         <h1 className="text-3xl font-bold text-slate-900">Dashboard</h1>
         <p className="text-slate-600 mt-2">
-          Welcome back! Here's your content overview.
+          Progress, stats, and in-app preview of ready clips.
         </p>
       </div>
 
@@ -193,19 +293,57 @@ export function DashboardPage() {
               </p>
             ) : (
               <div className="space-y-4">
-                {clips.slice(0, 12).map((clip) => (
+                {clips.slice(0, 15).map((clip) => (
                   <div
                     key={clip.id}
                     className="flex items-center justify-between gap-4 p-4 bg-slate-50 rounded-lg"
                   >
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium text-slate-900 truncate">
-                        {clip.title}
-                      </p>
-                      <p className="text-sm text-slate-600">
-                        {clip.duration}s · {clip.platform}
-                      </p>
-                      <ProgressBar clip={clip} />
+                    <div className="flex items-start gap-3 min-w-0 flex-1">
+                      {canPreview(clip) && (
+                        <button
+                          type="button"
+                          onClick={() => setPreviewClip(clip)}
+                          className="relative shrink-0 w-14 h-24 rounded-lg overflow-hidden bg-slate-800 group"
+                          title="Preview clip"
+                        >
+                          {clip.thumbnailUrl ? (
+                            <img
+                              src={clip.thumbnailUrl}
+                              alt=""
+                              className="w-full h-full object-cover opacity-90 group-hover:opacity-70"
+                            />
+                          ) : (
+                            <div className="w-full h-full bg-slate-700" />
+                          )}
+                          <span className="absolute inset-0 flex items-center justify-center">
+                            <span className="bg-white/90 rounded-full p-1.5 shadow">
+                              <Play
+                                size={16}
+                                className="text-slate-900 ml-0.5"
+                                fill="currentColor"
+                              />
+                            </span>
+                          </span>
+                        </button>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-slate-900 truncate">
+                          {clip.title}
+                        </p>
+                        <p className="text-sm text-slate-600">
+                          {clip.duration}s · {clip.platform}
+                        </p>
+                        <ProgressBar clip={clip} />
+                        {canPreview(clip) && (
+                          <button
+                            type="button"
+                            onClick={() => setPreviewClip(clip)}
+                            className="mt-2 text-xs font-medium text-blue-600 hover:text-blue-800 inline-flex items-center gap-1"
+                          >
+                            <Play size={12} /> Preview in app
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <span
                       className={`px-3 py-1 rounded-full text-sm font-medium capitalize shrink-0 ${
@@ -226,6 +364,10 @@ export function DashboardPage() {
             )}
           </div>
         </>
+      )}
+
+      {previewClip && (
+        <PreviewModal clip={previewClip} onClose={() => setPreviewClip(null)} />
       )}
     </div>
   );
