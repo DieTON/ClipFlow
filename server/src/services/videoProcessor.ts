@@ -153,6 +153,9 @@ export class VideoProcessor {
       .filter((c) => c.duration >= 5 && c.startSeconds >= 0);
   }
 
+  /**
+   * Cut segment with soft audio fade in/out so it doesn't feel like a hard chop.
+   */
   static async extractClip(options: {
     videoId: string;
     inputPath: string;
@@ -165,11 +168,21 @@ export class VideoProcessor {
       const clipId = uuid();
       const outputPath = path.join(this.OUTPUT_DIR, `${clipId}-${platform}.mp4`);
 
-      logger.info(`Extracting ${duration}s clip from ${inputPath} @ ${start}s`);
+      const fadeIn = Math.min(0.3, duration / 8);
+      const fadeOut = Math.min(0.45, duration / 6);
+      const fadeOutStart = Math.max(0, duration - fadeOut);
+
+      logger.info(
+        `Extracting ${duration}s clip (audio fade in ${fadeIn.toFixed(2)}s / out ${fadeOut.toFixed(2)}s) @ ${start}s`,
+      );
 
       ffmpeg(inputPath)
         .setStartTime(start)
         .duration(duration)
+        .audioFilters([
+          `afade=t=in:st=0:d=${fadeIn.toFixed(3)}`,
+          `afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${fadeOut.toFixed(3)}`,
+        ])
         .outputOptions([
           '-c:v libx264',
           '-preset fast',
@@ -198,24 +211,30 @@ export class VideoProcessor {
   }
 
   /**
-   * Fill 9:16 frame (crop center) — no black bars. More Shorts-native than letterbox pad.
+   * Fill 9:16 + subtle slow zoom (Ken Burns style) so it feels less static/bland.
    */
   static async transcodeForPlatform(
     inputPath: string,
     platform: string,
+    durationSeconds = 30,
   ): Promise<string> {
     return new Promise((resolve, reject) => {
       const clipId = uuid();
       const outputPath = path.join(this.OUTPUT_DIR, `${clipId}-transcoded.mp4`);
 
-      logger.info(`Transcoding fill-frame 9:16 for ${platform}`);
+      const fps = 30;
+      const frames = Math.max(fps, Math.round(durationSeconds * fps));
+      // Zoom from 1.0 → ~1.08 over the clip (gentle, not dizzy)
+      const zoomFilter =
+        `scale=1200:2133:force_original_aspect_ratio=increase,` +
+        `zoompan=z='min(1+0.08*on/${frames},1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=${fps}`;
 
-      // Scale up to cover 1080x1920, then crop center (faces usually near center)
+      logger.info(
+        `Transcoding natural 9:16 (slow zoom, ${durationSeconds}s) for ${platform}`,
+      );
+
       ffmpeg(inputPath)
-        .videoFilters([
-          'scale=1080:1920:force_original_aspect_ratio=increase',
-          'crop=1080:1920',
-        ])
+        .videoFilters([zoomFilter])
         .outputOptions([
           '-c:v libx264',
           '-preset fast',
@@ -223,16 +242,41 @@ export class VideoProcessor {
           '-c:a aac',
           '-b:a 128k',
           '-movflags +faststart',
-          '-r 30',
+          `-r ${fps}`,
+          '-t',
+          String(durationSeconds),
         ])
         .output(outputPath)
         .on('end', () => {
-          logger.info(`Transcoded (fill crop): ${outputPath}`);
+          logger.info(`Transcoded (natural zoom): ${outputPath}`);
           resolve(outputPath);
         })
         .on('error', (err) => {
           logger.error('Transcode error:', err.message);
-          reject(err);
+          // Fallback: simple fill crop without zoom if zoompan fails
+          logger.warn('Retrying transcode without zoom…');
+          const fallbackPath = path.join(
+            this.OUTPUT_DIR,
+            `${uuid()}-transcoded.mp4`,
+          );
+          ffmpeg(inputPath)
+            .videoFilters([
+              'scale=1080:1920:force_original_aspect_ratio=increase',
+              'crop=1080:1920',
+            ])
+            .outputOptions([
+              '-c:v libx264',
+              '-preset fast',
+              '-crf 23',
+              '-c:a aac',
+              '-b:a 128k',
+              '-movflags +faststart',
+              '-r 30',
+            ])
+            .output(fallbackPath)
+            .on('end', () => resolve(fallbackPath))
+            .on('error', (err2) => reject(err2))
+            .run();
         })
         .run();
     });

@@ -90,7 +90,7 @@ export async function processClipJob(job: Job) {
       }
     }
 
-    await setProgress(clipId, 55, 'Cutting clip');
+    await setProgress(clipId, 55, 'Cutting clip (soft audio fades)');
     const clipPath = await VideoProcessor.extractClip({
       videoId,
       inputPath: sourcePath,
@@ -99,10 +99,11 @@ export async function processClipJob(job: Job) {
       platform,
     });
 
-    await setProgress(clipId, 70, 'Making vertical (9:16)');
+    await setProgress(clipId, 70, 'Vertical 9:16 + gentle zoom');
     let transcodedPath = await VideoProcessor.transcodeForPlatform(
       clipPath,
       platform,
+      duration,
     );
 
     if (burnCaptions && srtPath) {
