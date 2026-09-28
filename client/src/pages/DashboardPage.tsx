@@ -8,9 +8,12 @@ import {
   X,
   ExternalLink,
   Download,
+  RotateCcw,
+  FolderOpen,
 } from 'lucide-react';
 import { useClipStore, Clip } from '../store/clipStore';
 import api from '../lib/api';
+import toast from 'react-hot-toast';
 
 interface Stats {
   totalClips: number;
@@ -134,7 +137,7 @@ function PreviewModal({
             />
           ) : (
             <p className="text-white text-sm p-6 text-center">
-              No video file URL yet. Check Videos\\ClipFlow on your PC.
+              No video URL. Check Videos\\ClipFlow on your PC.
             </p>
           )}
         </div>
@@ -154,7 +157,7 @@ function PreviewModal({
               <a
                 href={src}
                 download
-                className="inline-flex items-center gap-2 text-sm font-medium text-slate-700 hover:text-slate-900 px-3 py-2 rounded-lg hover:bg-slate-50"
+                className="inline-flex items-center gap-2 text-sm font-medium text-slate-700 px-3 py-2 rounded-lg hover:bg-slate-50"
               >
                 <Download size={16} />
                 Download
@@ -176,6 +179,7 @@ export function DashboardPage() {
   });
   const [loading, setLoading] = useState(true);
   const [previewClip, setPreviewClip] = useState<Clip | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const { clips, setClips } = useClipStore();
 
   useEffect(() => {
@@ -223,6 +227,37 @@ export function DashboardPage() {
     };
   }, [setClips]);
 
+  const handleRetry = async (clip: Clip) => {
+    setRetryingId(clip.id);
+    try {
+      await api.post(`/api/clips/${clip.id}/retry`, {});
+      toast.success('Retry queued — watch progress');
+      setClips(
+        clips.map((c) =>
+          c.id === clip.id
+            ? {
+                ...c,
+                status: 'processing',
+                progressPercent: 2,
+                progressLabel: 'Retry queued',
+              }
+            : c,
+        ),
+      );
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error || 'Retry failed');
+    } finally {
+      setRetryingId(null);
+    }
+  };
+
+  const openVideosFolder = () => {
+    toast(
+      'On your PC open: C:\\Users\\anton\\Videos\\ClipFlow',
+      { duration: 5000 },
+    );
+  };
+
   const StatCard = ({
     icon: Icon,
     label,
@@ -251,11 +286,21 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold text-slate-900">Dashboard</h1>
-        <p className="text-slate-600 mt-2">
-          Progress, stats, and in-app preview of ready clips.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900">Dashboard</h1>
+          <p className="text-slate-600 mt-2">
+            Progress, preview, and retry failed clips.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={openVideosFolder}
+          className="inline-flex items-center gap-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-lg"
+        >
+          <FolderOpen size={18} />
+          Clip files folder
+        </button>
       </div>
 
       {loading ? (
@@ -334,15 +379,34 @@ export function DashboardPage() {
                           {clip.duration}s · {clip.platform}
                         </p>
                         <ProgressBar clip={clip} />
-                        {canPreview(clip) && (
-                          <button
-                            type="button"
-                            onClick={() => setPreviewClip(clip)}
-                            className="mt-2 text-xs font-medium text-blue-600 hover:text-blue-800 inline-flex items-center gap-1"
-                          >
-                            <Play size={12} /> Preview in app
-                          </button>
-                        )}
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {canPreview(clip) && (
+                            <button
+                              type="button"
+                              onClick={() => setPreviewClip(clip)}
+                              className="text-xs font-medium text-blue-600 hover:text-blue-800 inline-flex items-center gap-1"
+                            >
+                              <Play size={12} /> Preview
+                            </button>
+                          )}
+                          {(clip.status === 'failed' ||
+                            clip.status === 'draft') && (
+                            <button
+                              type="button"
+                              disabled={retryingId === clip.id}
+                              onClick={() => handleRetry(clip)}
+                              className="text-xs font-medium text-amber-700 hover:text-amber-900 inline-flex items-center gap-1 disabled:opacity-50"
+                            >
+                              <RotateCcw
+                                size={12}
+                                className={
+                                  retryingId === clip.id ? 'animate-spin' : ''
+                                }
+                              />
+                              {retryingId === clip.id ? 'Retrying…' : 'Retry'}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                     <span

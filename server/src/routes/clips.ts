@@ -8,6 +8,24 @@ import { enqueueClipProcessing } from '../queues/index.js';
 
 const router = express.Router();
 
+async function resolveUploadSource(
+  userId: string,
+  videoId: string,
+): Promise<string | undefined> {
+  if (!String(videoId).startsWith('file_')) return undefined;
+  const base = path.join('./videos/uploads', userId, String(videoId));
+  const { promises: fs } = await import('fs');
+  for (const ext of ['.mp4', '.mov', '.webm', '.mkv']) {
+    try {
+      await fs.access(base + ext);
+      return base + ext;
+    } catch {
+      /* next */
+    }
+  }
+  return undefined;
+}
+
 router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const userId = req.user?.userId;
@@ -71,18 +89,8 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 
     if (process) {
       let resolvedSource = sourcePath as string | undefined;
-      if (!resolvedSource && String(videoId).startsWith('file_')) {
-        const base = path.join('./videos/uploads', userId!, String(videoId));
-        for (const ext of ['.mp4', '.mov', '.webm', '.mkv']) {
-          try {
-            const { promises: fs } = await import('fs');
-            await fs.access(base + ext);
-            resolvedSource = base + ext;
-            break;
-          } catch {
-            /* next */
-          }
-        }
+      if (!resolvedSource) {
+        resolvedSource = await resolveUploadSource(userId!, videoId);
       }
 
       await enqueueClipProcessing({
@@ -105,12 +113,68 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
+/** Re-queue a failed (or draft) clip for processing */
+router.post(
+  '/:id/retry',
+  authMiddleware,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.userId!;
+      const burnCaptions = req.body?.burnCaptions !== false;
+      const addLogo = req.body?.addLogo === true;
+
+      const clip = await prisma.clip.findUnique({
+        where: { id: req.params.id },
+      });
+
+      if (!clip || clip.userId !== userId) {
+        throw new AppError('Clip not found', 404);
+      }
+
+      if (clip.status === 'processing') {
+        throw new AppError('Clip is already processing', 400);
+      }
+
+      const sourcePath = await resolveUploadSource(userId, clip.videoId);
+
+      const updated = await prisma.clip.update({
+        where: { id: clip.id },
+        data: {
+          status: 'processing',
+          progressPercent: 2,
+          progressLabel: 'Retry queued',
+          videoUrl: null,
+          thumbnailUrl: null,
+        },
+      });
+
+      await enqueueClipProcessing({
+        clipId: clip.id,
+        userId,
+        videoId: clip.videoId,
+        startSeconds: clip.startSeconds,
+        duration: clip.duration,
+        platform: clip.platform,
+        sourcePath,
+        burnCaptions,
+        addLogo,
+      });
+
+      logger.info(`Retry enqueued for clip ${clip.id}`);
+      res.json({ message: 'Retry queued', clip: updated });
+    } catch (error: any) {
+      logger.error('Retry clip error:', error.message);
+      throw error;
+    }
+  },
+);
+
 router.post(
   '/:id/process',
   authMiddleware,
   async (req: Request, res: Response) => {
     try {
-      const userId = req.user?.userId;
+      const userId = req.user?.userId!;
       const burnCaptions = req.body?.burnCaptions !== false;
       const addLogo = req.body?.addLogo === true;
       const clip = await prisma.clip.findUnique({
@@ -121,20 +185,7 @@ router.post(
         throw new AppError('Clip not found', 404);
       }
 
-      let sourcePath: string | undefined;
-      if (String(clip.videoId).startsWith('file_')) {
-        const base = path.join('./videos/uploads', userId!, clip.videoId);
-        const { promises: fs } = await import('fs');
-        for (const ext of ['.mp4', '.mov', '.webm', '.mkv']) {
-          try {
-            await fs.access(base + ext);
-            sourcePath = base + ext;
-            break;
-          } catch {
-            /* next */
-          }
-        }
-      }
+      const sourcePath = await resolveUploadSource(userId, clip.videoId);
 
       await prisma.clip.update({
         where: { id: clip.id },
@@ -147,7 +198,7 @@ router.post(
 
       await enqueueClipProcessing({
         clipId: clip.id,
-        userId: userId!,
+        userId,
         videoId: clip.videoId,
         startSeconds: clip.startSeconds,
         duration: clip.duration,
