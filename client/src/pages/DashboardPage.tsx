@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   BarChart3,
   Film,
@@ -10,6 +10,7 @@ import {
   Download,
   RotateCcw,
   FolderOpen,
+  Trash2,
 } from 'lucide-react';
 import { useClipStore, Clip } from '../store/clipStore';
 import api from '../lib/api';
@@ -21,6 +22,8 @@ interface Stats {
   avgEngagement: number;
   scheduledClips: number;
 }
+
+type FilterKey = 'all' | 'ready' | 'processing' | 'failed' | 'published';
 
 function ProgressBar({ clip }: { clip: Clip }) {
   const isProcessing = clip.status === 'processing' || clip.status === 'draft';
@@ -180,7 +183,9 @@ export function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [previewClip, setPreviewClip] = useState<Clip | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
-  const { clips, setClips } = useClipStore();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<FilterKey>('all');
+  const { clips, setClips, removeClip } = useClipStore();
 
   useEffect(() => {
     let cancelled = false;
@@ -227,6 +232,27 @@ export function DashboardPage() {
     };
   }, [setClips]);
 
+  const counts = useMemo(() => {
+    const c = { all: clips.length, ready: 0, processing: 0, failed: 0, published: 0 };
+    for (const clip of clips) {
+      if (clip.status === 'ready') c.ready++;
+      else if (clip.status === 'processing' || clip.status === 'draft') c.processing++;
+      else if (clip.status === 'failed') c.failed++;
+      else if (clip.status === 'published') c.published++;
+    }
+    return c;
+  }, [clips]);
+
+  const filtered = useMemo(() => {
+    if (filter === 'all') return clips;
+    if (filter === 'processing') {
+      return clips.filter(
+        (c) => c.status === 'processing' || c.status === 'draft',
+      );
+    }
+    return clips.filter((c) => c.status === filter);
+  }, [clips, filter]);
+
   const handleRetry = async (clip: Clip) => {
     setRetryingId(clip.id);
     try {
@@ -251,11 +277,24 @@ export function DashboardPage() {
     }
   };
 
+  const handleDelete = async (clip: Clip) => {
+    if (!window.confirm(`Delete "${clip.title.slice(0, 40)}"?`)) return;
+    setDeletingId(clip.id);
+    try {
+      await api.delete(`/api/clips/${clip.id}`);
+      removeClip(clip.id);
+      toast.success('Clip deleted');
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error || 'Delete failed');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const openVideosFolder = () => {
-    toast(
-      'On your PC open: C:\\Users\\anton\\Videos\\ClipFlow',
-      { duration: 5000 },
-    );
+    toast('On your PC: C:\\Users\\anton\\Videos\\ClipFlow', {
+      duration: 5000,
+    });
   };
 
   const StatCard = ({
@@ -284,13 +323,21 @@ export function DashboardPage() {
     !!clip.videoUrl &&
     (clip.status === 'ready' || clip.status === 'published');
 
+  const filters: { key: FilterKey; label: string }[] = [
+    { key: 'all', label: `All (${counts.all})` },
+    { key: 'ready', label: `Ready (${counts.ready})` },
+    { key: 'processing', label: `Processing (${counts.processing})` },
+    { key: 'failed', label: `Failed (${counts.failed})` },
+    { key: 'published', label: `Published (${counts.published})` },
+  ];
+
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-slate-900">Dashboard</h1>
           <p className="text-slate-600 mt-2">
-            Progress, preview, and retry failed clips.
+            Filter, preview, retry, or delete clips.
           </p>
         </div>
         <button
@@ -329,16 +376,35 @@ export function DashboardPage() {
           </div>
 
           <div className="card">
-            <h2 className="text-xl font-bold text-slate-900 mb-4">
-              Recent Clips
-            </h2>
-            {clips.length === 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <h2 className="text-xl font-bold text-slate-900">Clips</h2>
+              <div className="flex flex-wrap gap-2">
+                {filters.map((f) => (
+                  <button
+                    key={f.key}
+                    type="button"
+                    onClick={() => setFilter(f.key)}
+                    className={`text-xs font-medium px-3 py-1.5 rounded-full border transition ${
+                      filter === f.key
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {filtered.length === 0 ? (
               <p className="text-slate-600">
-                No clips yet. Start by creating one in the Generator!
+                {clips.length === 0
+                  ? 'No clips yet. Start in the Generator!'
+                  : 'No clips in this filter.'}
               </p>
             ) : (
               <div className="space-y-4">
-                {clips.slice(0, 15).map((clip) => (
+                {filtered.slice(0, 30).map((clip) => (
                   <div
                     key={clip.id}
                     className="flex items-center justify-between gap-4 p-4 bg-slate-50 rounded-lg"
@@ -379,7 +445,7 @@ export function DashboardPage() {
                           {clip.duration}s · {clip.platform}
                         </p>
                         <ProgressBar clip={clip} />
-                        <div className="mt-2 flex flex-wrap gap-2">
+                        <div className="mt-2 flex flex-wrap gap-3">
                           {canPreview(clip) && (
                             <button
                               type="button"
@@ -406,6 +472,15 @@ export function DashboardPage() {
                               {retryingId === clip.id ? 'Retrying…' : 'Retry'}
                             </button>
                           )}
+                          <button
+                            type="button"
+                            disabled={deletingId === clip.id}
+                            onClick={() => handleDelete(clip)}
+                            className="text-xs font-medium text-red-600 hover:text-red-800 inline-flex items-center gap-1 disabled:opacity-50"
+                          >
+                            <Trash2 size={12} />
+                            {deletingId === clip.id ? 'Deleting…' : 'Delete'}
+                          </button>
                         </div>
                       </div>
                     </div>
