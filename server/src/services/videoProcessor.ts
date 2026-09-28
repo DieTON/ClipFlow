@@ -35,7 +35,6 @@ export class VideoProcessor {
     metadata: any;
     goal: string;
     platforms: string[];
-    /** Optional transcript cues for smarter suggestions */
     transcriptCues?: Array<{ start: number; end: number; text: string }>;
   }) {
     logger.info('Generating clips for video:', options.videoId);
@@ -43,14 +42,15 @@ export class VideoProcessor {
     const totalSeconds = parseDurationSeconds(options.metadata?.duration);
     const platforms =
       options.platforms?.length > 0 ? options.platforms : ['youtube'];
+    const videoTitle = options.metadata?.title || 'Clip';
 
-    // Prefer transcript-based suggestions when available
     if (options.transcriptCues?.length) {
       const smart = suggestionsFromTranscript(
         options.transcriptCues,
         totalSeconds,
         platforms,
         options.goal || 'Viral highlights',
+        videoTitle,
       );
       if (smart) {
         logger.info(`Using ${smart.length} transcript-based suggestions`);
@@ -67,130 +67,35 @@ export class VideoProcessor {
 
     const GOAL_TEMPLATES: Record<string, Template[]> = {
       'Viral highlights': [
-        {
-          name: 'Opening hook',
-          startRatio: 0.02,
-          duration: 30,
-          reason: 'Strong opening moment to stop the scroll',
-        },
-        {
-          name: 'Peak energy',
-          startRatio: 0.35,
-          duration: 40,
-          reason: 'High-energy midpoint highlight',
-        },
-        {
-          name: 'Surprising twist',
-          startRatio: 0.55,
-          duration: 35,
-          reason: 'Unexpected turn that drives shares',
-        },
-        {
-          name: 'Climax moment',
-          startRatio: 0.75,
-          duration: 30,
-          reason: 'Payoff moment near the end',
-        },
+        { name: 'Opening hook', startRatio: 0.02, duration: 30, reason: 'Strong opening moment to stop the scroll' },
+        { name: 'Peak energy', startRatio: 0.35, duration: 40, reason: 'High-energy midpoint highlight' },
+        { name: 'Surprising twist', startRatio: 0.55, duration: 35, reason: 'Unexpected turn that drives shares' },
+        { name: 'Climax moment', startRatio: 0.75, duration: 30, reason: 'Payoff moment near the end' },
       ],
       'Motivational moments': [
-        {
-          name: 'Turning point',
-          startRatio: 0.15,
-          duration: 45,
-          reason: 'Emotional low-to-high shift',
-        },
-        {
-          name: 'Breakthrough',
-          startRatio: 0.45,
-          duration: 50,
-          reason: 'Key insight or breakthrough',
-        },
-        {
-          name: 'Wisdom drop',
-          startRatio: 0.7,
-          duration: 40,
-          reason: 'Memorable takeaway quote',
-        },
+        { name: 'Turning point', startRatio: 0.15, duration: 45, reason: 'Emotional low-to-high shift' },
+        { name: 'Breakthrough', startRatio: 0.45, duration: 50, reason: 'Key insight or breakthrough' },
+        { name: 'Wisdom drop', startRatio: 0.7, duration: 40, reason: 'Memorable takeaway quote' },
       ],
       'Funny/reactions': [
-        {
-          name: 'Unexpected moment',
-          startRatio: 0.1,
-          duration: 25,
-          reason: 'Comedy beat early on',
-        },
-        {
-          name: 'Reaction peak',
-          startRatio: 0.4,
-          duration: 30,
-          reason: 'Strong reaction shot',
-        },
-        {
-          name: 'Absurd scenario',
-          startRatio: 0.65,
-          duration: 35,
-          reason: 'Most shareable funny segment',
-        },
+        { name: 'Unexpected moment', startRatio: 0.1, duration: 25, reason: 'Comedy beat early on' },
+        { name: 'Reaction peak', startRatio: 0.4, duration: 30, reason: 'Strong reaction shot' },
+        { name: 'Absurd scenario', startRatio: 0.65, duration: 35, reason: 'Most shareable funny segment' },
       ],
       'Educational snippets': [
-        {
-          name: 'Key insight',
-          startRatio: 0.08,
-          duration: 45,
-          reason: 'Core concept explained clearly',
-        },
-        {
-          name: 'Step-by-step',
-          startRatio: 0.4,
-          duration: 55,
-          reason: 'Actionable how-to segment',
-        },
-        {
-          name: 'Pro tip',
-          startRatio: 0.72,
-          duration: 35,
-          reason: 'Advanced tip worth saving',
-        },
+        { name: 'Key insight', startRatio: 0.08, duration: 45, reason: 'Core concept explained clearly' },
+        { name: 'Step-by-step', startRatio: 0.4, duration: 55, reason: 'Actionable how-to segment' },
+        { name: 'Pro tip', startRatio: 0.72, duration: 35, reason: 'Advanced tip worth saving' },
       ],
       'Story-driven': [
-        {
-          name: 'Scene setter',
-          startRatio: 0.0,
-          duration: 35,
-          reason: 'Context that pulls viewers in',
-        },
-        {
-          name: 'Rising tension',
-          startRatio: 0.4,
-          duration: 45,
-          reason: 'Builds curiosity',
-        },
-        {
-          name: 'Emotional climax',
-          startRatio: 0.75,
-          duration: 40,
-          reason: 'Emotional payoff',
-        },
+        { name: 'Scene setter', startRatio: 0.0, duration: 35, reason: 'Context that pulls viewers in' },
+        { name: 'Rising tension', startRatio: 0.4, duration: 45, reason: 'Builds curiosity' },
+        { name: 'Emotional climax', startRatio: 0.75, duration: 40, reason: 'Emotional payoff' },
       ],
       'Product showcase': [
-        {
-          name: 'Problem setup',
-          startRatio: 0.05,
-          duration: 30,
-          reason: 'Pain point viewers relate to',
-        },
-        {
-          name: 'Product reveal',
-          startRatio: 0.35,
-          duration: 40,
-          reason: 'Clear product demonstration',
-        },
-        {
-          name: 'Before/after',
-          startRatio: 0.65,
-          duration: 45,
-          reason: 'Transformation proof',
-        },
+        { name: 'Problem setup', startRatio: 0.05, duration: 30, reason: 'Pain point viewers relate to' },
+        { name: 'Product reveal', startRatio: 0.35, duration: 40, reason: 'Clear product demonstration' },
+        { name: 'Before/after', startRatio: 0.65, duration: 45, reason: 'Transformation proof' },
       ],
     };
 
@@ -199,6 +104,8 @@ export class VideoProcessor {
 
     const minClip = 15;
     const maxClip = 60;
+    const shortTitle =
+      videoTitle.length > 50 ? videoTitle.slice(0, 47) + '…' : videoTitle;
 
     logger.info('Using template-based suggestions (no usable transcript)');
 
@@ -223,6 +130,10 @@ export class VideoProcessor {
               : 0.78;
         const score = Math.min(0.98, baseScore + (i % 3) * 0.03);
 
+        const suggestedTitle = `${template.name}: ${shortTitle}`;
+        const hashtags =
+          '#Shorts #Viral #FYP #Trending #Clip #YouTubeShorts';
+
         return {
           id: uuid(),
           label: template.name,
@@ -233,8 +144,9 @@ export class VideoProcessor {
           duration,
           platform: platforms[i % platforms.length],
           score,
-          hook: `${template.name} — you won't believe what happens next`,
-          hashtags: `#${options.goal.replace(/\s/g, '')} #Shorts #Viral #Trending`,
+          hook: suggestedTitle,
+          hashtags,
+          suggestedTitle,
           selected: true,
         };
       })
@@ -285,6 +197,9 @@ export class VideoProcessor {
     });
   }
 
+  /**
+   * Fill 9:16 frame (crop center) — no black bars. More Shorts-native than letterbox pad.
+   */
   static async transcodeForPlatform(
     inputPath: string,
     platform: string,
@@ -293,12 +208,13 @@ export class VideoProcessor {
       const clipId = uuid();
       const outputPath = path.join(this.OUTPUT_DIR, `${clipId}-transcoded.mp4`);
 
-      logger.info(`Transcoding for ${platform}`);
+      logger.info(`Transcoding fill-frame 9:16 for ${platform}`);
 
+      // Scale up to cover 1080x1920, then crop center (faces usually near center)
       ffmpeg(inputPath)
         .videoFilters([
-          'scale=1080:1920:force_original_aspect_ratio=decrease',
-          'pad=1080:1920:(ow-iw)/2:(oh-ih)/2',
+          'scale=1080:1920:force_original_aspect_ratio=increase',
+          'crop=1080:1920',
         ])
         .outputOptions([
           '-c:v libx264',
@@ -311,7 +227,7 @@ export class VideoProcessor {
         ])
         .output(outputPath)
         .on('end', () => {
-          logger.info(`Transcoded: ${outputPath}`);
+          logger.info(`Transcoded (fill crop): ${outputPath}`);
           resolve(outputPath);
         })
         .on('error', (err) => {

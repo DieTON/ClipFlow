@@ -11,65 +11,19 @@ interface SrtCue {
 }
 
 const HOOK_WORDS = [
-  'wait',
-  'what',
-  'never',
-  'secret',
-  'actually',
-  'insane',
-  'crazy',
-  'shock',
-  'shocked',
-  'amazing',
-  'unbelievable',
-  'honestly',
-  'literally',
-  'finally',
-  'biggest',
-  'worst',
-  'best',
-  'mistake',
-  'warning',
-  'stop',
-  'don\'t',
-  'cannot',
-  'won\'t',
-  'believe',
-  'truth',
-  'reveal',
-  'revealed',
-  'story',
-  'happened',
-  'suddenly',
-  'omg',
-  'holy',
-  'bro',
-  'guys',
-  'listen',
-  'watch',
-  'look',
-  'here',
-  'money',
-  'free',
-  'win',
-  'lost',
-  'die',
-  'death',
-  'love',
-  'hate',
-  'fight',
-  'scream',
+  'wait', 'what', 'never', 'secret', 'actually', 'insane', 'crazy', 'shock',
+  'shocked', 'amazing', 'unbelievable', 'honestly', 'literally', 'finally',
+  'biggest', 'worst', 'best', 'mistake', 'warning', 'stop', "don't", 'cannot',
+  "won't", 'believe', 'truth', 'reveal', 'revealed', 'story', 'happened',
+  'suddenly', 'omg', 'holy', 'bro', 'guys', 'listen', 'watch', 'look', 'here',
+  'money', 'free', 'win', 'lost', 'die', 'death', 'love', 'hate', 'fight', 'scream',
 ];
 
 function parseTimestamp(ts: string): number {
   const norm = ts.trim().replace(',', '.');
   const parts = norm.split(':');
   if (parts.length === 3) {
-    return (
-      parseFloat(parts[0]) * 3600 +
-      parseFloat(parts[1]) * 60 +
-      parseFloat(parts[2])
-    );
+    return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
   }
   if (parts.length === 2) {
     return parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
@@ -120,12 +74,18 @@ function formatTime(sec: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-/** Build clip windows from high-scoring transcript moments */
+function cleanTitlePart(text: string, max = 55): string {
+  const t = text.replace(/["“”]/g, '').replace(/\s+/g, ' ').trim();
+  if (t.length <= max) return t;
+  return t.slice(0, max - 1).trim() + '…';
+}
+
 export function suggestionsFromTranscript(
   cues: SrtCue[],
   totalSeconds: number,
   platforms: string[],
   goal: string,
+  videoTitle = 'Clip',
 ) {
   if (!cues.length || totalSeconds < 10) return null;
 
@@ -139,18 +99,18 @@ export function suggestionsFromTranscript(
   const clipDur = 35;
   const used: Array<{ start: number; end: number }> = [];
   const out: any[] = [];
+  const shortVid =
+    videoTitle.length > 40 ? videoTitle.slice(0, 37) + '…' : videoTitle;
 
   for (const cue of scored) {
     if (out.length >= 6) break;
 
-    // Center window on the strong line
     let start = Math.max(0, Math.floor(cue.start - 5));
     let duration = Math.min(clipDur, Math.max(20, totalSeconds - start));
     if (start + duration > totalSeconds) {
       start = Math.max(0, totalSeconds - duration);
     }
 
-    // Avoid overlapping suggestions
     const overlaps = used.some(
       (u) => start < u.end && start + duration > u.start,
     );
@@ -158,19 +118,28 @@ export function suggestionsFromTranscript(
 
     used.push({ start, end: start + duration });
 
-    const snippet = cue.text.slice(0, 80);
+    const snippet = cleanTitlePart(cue.text, 70);
+    const suggestedTitle =
+      out.length === 0
+        ? cleanTitlePart(cue.text, 60)
+        : `${cleanTitlePart(cue.text, 45)} | ${shortVid}`;
+
+    const hashtags =
+      '#Shorts #Viral #FYP #Trending #YouTubeShorts #Clips';
+
     out.push({
       id: uuid(),
       label: out.length === 0 ? 'Top hook' : `Moment ${out.length + 1}`,
-      reason: `Transcript signal: “${snippet}${cue.text.length > 80 ? '…' : ''}”`,
+      reason: `Transcript: “${snippet}”`,
       start: formatTime(start),
       end: formatTime(start + duration),
       startSeconds: start,
       duration,
       platform: platforms[out.length % platforms.length] || 'youtube',
       score: cue.score,
-      hook: snippet,
-      hashtags: `#${goal.replace(/\s/g, '')} #Shorts #Viral`,
+      hook: suggestedTitle,
+      hashtags,
+      suggestedTitle,
       selected: true,
     });
   }
@@ -178,7 +147,6 @@ export function suggestionsFromTranscript(
   return out.length >= 2 ? out : null;
 }
 
-/** Download auto-captions only (no video) for analysis */
 export async function fetchYoutubeTranscript(
   videoId: string,
   workDir: string,
